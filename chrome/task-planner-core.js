@@ -33,6 +33,9 @@ const MAX_PILLS = 5;
 // most recent messages so the session record can't grow without bound.
 const MAX_USER_MESSAGE_CHARS = 4000;
 const MAX_STORED_MESSAGES = 50;
+// How many previously-shown pills ride in the "avoid these" list — enough for
+// variety across several refreshes without bloating the prompt or the session.
+const MAX_PILLS_SEEN = 24;
 
 // Static fallbacks when pill generation fails (offline, signed out, bad JSON).
 const FALLBACK_PILLS = ['Plan a trip', 'Research a topic', 'Learn a new skill', 'Compare products'];
@@ -144,19 +147,24 @@ function buildPlannerSystemPrompt({ groups = [], collectionName = '' } = {}) {
 // How many of the user's collection summaries feed the pills prompt.
 const PILLS_MAX_COLLECTIONS = 15;
 
-function buildPillsPrompt(summaries = []) {
+function buildPillsPrompt(summaries = [], avoidPills = []) {
     const capped = (Array.isArray(summaries) ? summaries : []).slice(0, PILLS_MAX_COLLECTIONS);
     const lines = capped.map((c) => {
         const titles = (c.tabs || []).map((t) => t.title).filter(Boolean).slice(0, 3);
         return `- "${c.name || 'Untitled'}"${titles.length ? ` (e.g. ${titles.join('; ')})` : ''}`;
     });
+    const avoid = (Array.isArray(avoidPills) ? avoidPills : []).filter(Boolean);
     return [
         'Suggest quick-start ideas ("pills") for a browser-tab planning assistant. The user taps one to start collecting websites for a task or topic.',
         `Each pill is a short imperative phrase of 2-4 words, at most ${MAX_PILL_CHARS} characters (like "Plan a trip" or "Research a topic").`,
+        'Be creative and varied: mix everyday tasks with a few fresh, unexpected ideas.',
         '',
         lines.length
             ? `The user's saved tab collections, for inspiration (stay generic enough to start something new):\n${lines.join('\n')}`
             : 'The user has no saved collections yet — suggest broadly useful ideas.',
+        ...(avoid.length
+            ? ['', `The user has already seen these — suggest DIFFERENT ideas:\n${avoid.map((p) => `- ${p}`).join('\n')}`]
+            : []),
         '',
         `Respond with JSON: { "pills": ["...", ...] } — ${MIN_PILLS} to ${MAX_PILLS} pills.`,
     ].join('\n');
@@ -286,6 +294,7 @@ const taskPlannerCoreApi = {
     MAX_PILLS,
     MAX_USER_MESSAGE_CHARS,
     MAX_STORED_MESSAGES,
+    MAX_PILLS_SEEN,
     PILLS_MAX_COLLECTIONS,
     FALLBACK_PILLS,
     DEFAULT_REPLY,

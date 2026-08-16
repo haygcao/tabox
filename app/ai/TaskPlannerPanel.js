@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSetAtom } from 'jotai';
-import { MdClose, MdSend } from 'react-icons/md';
+import { MdClose, MdRefresh, MdSend } from 'react-icons/md';
 import { BsStars } from 'react-icons/bs';
 import { aiProcessingUidsState } from '../atoms/aiState';
 import TaboxCollection from '../model/TaboxCollection';
@@ -206,6 +206,20 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         }
     }, []);
 
+    // Spin up a fresh batch of suggestion pills. The SW flips pills to null
+    // (skeletons + spinning icon render from that) and lands the new batch via
+    // storage.onChanged; the reply only carries failures worth surfacing.
+    const handleRefreshPills = useCallback(async () => {
+        setActionError(null);
+        try {
+            const res = await browser.runtime.sendMessage({ type: 'taskPlannerRefreshPills' });
+            if (res && res.ok === false && res.error) setActionError(res.error);
+        } catch (e) {
+            console.error('Task Planner: pill refresh failed', e);
+            setActionError('Could not fetch new ideas. Please try again.');
+        }
+    }, []);
+
     const resetLocal = useCallback(() => {
         nameTouchedRef.current = false;
         setNameDraft('');
@@ -374,6 +388,20 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                                     {pill}
                                 </button>
                             ))}
+                            <button
+                                type="button"
+                                className={`tp-pills-refresh${pills === null ? ' tp-pills-refresh--spinning' : ''}`}
+                                aria-label="New ideas"
+                                data-tooltip-id="main-tooltip"
+                                data-tooltip-content="New ideas"
+                                data-tooltip-class-name="small-tooltip"
+                                // Disabled while a batch is already generating (it
+                                // spins instead) or a turn is in flight.
+                                disabled={pills === null || isThinking}
+                                onClick={handleRefreshPills}
+                            >
+                                <MdRefresh size={15} />
+                            </button>
                         </div>
                     )}
 

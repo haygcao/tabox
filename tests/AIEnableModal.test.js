@@ -16,7 +16,7 @@ describe('AIEnableModal', () => {
 
     test('explains cloud processing before enabling', () => {
         render(<AIEnableModal isOpen={true} onClose={jest.fn()} />);
-        expect(screen.getByText(/DeepSeek V4 Flash/i)).toBeInTheDocument();
+        expect(screen.getByText(/Google Gemini 3\.5 Flash Lite/i)).toBeInTheDocument();
         expect(screen.getByText(/sent to OpenRouter for processing/i)).toBeInTheDocument();
     });
 

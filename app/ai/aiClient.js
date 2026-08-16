@@ -1,6 +1,7 @@
 // Thin popup-side AI wrapper. Inference runs in the service worker
 // (`aiComplete` message → chrome/ai-client.js → the Tabox Worker's
-// /ai/complete proxy → OpenRouter DeepSeek V4 Flash), so the popup never
+// /ai/complete proxy → OpenRouter, model pinned server-side in
+// server/src/aiProxy.js), so the popup never
 // handles auth tokens and the OpenRouter API key never ships in the
 // extension. Every Tabox AI feature goes through this module so the
 // underlying provider or execution context can change without touching

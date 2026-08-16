@@ -1,7 +1,8 @@
 /* eslint-disable no-undef */
 // chrome/ai-client.js
 // Service-worker AI client. All inference goes through the Tabox Worker's
-// POST /ai/complete proxy (OpenRouter, DeepSeek V4 Flash) so the OpenRouter
+// POST /ai/complete proxy (OpenRouter; model pinned server-side in
+// server/src/aiProxy.js, currently google/gemini-3.5-flash-lite) so the OpenRouter
 // API key never ships in the extension — the Worker holds it as a secret and
 // authenticates callers by their Google token. The popup's app/ai/aiClient.js
 // relays through here via the `aiComplete` message; keep the session/prompt

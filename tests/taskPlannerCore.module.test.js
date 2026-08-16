@@ -56,6 +56,16 @@ describe('buildPillsPrompt', () => {
         expect(core.buildPillsPrompt([])).toContain('no saved collections');
         expect(core.buildPillsPrompt(undefined)).toContain('no saved collections');
     });
+
+    test('lists previously seen pills as ideas to avoid', () => {
+        const prompt = core.buildPillsPrompt([], ['Plan a trip', 'Learn pottery']);
+        expect(prompt).toContain('already seen');
+        expect(prompt).toContain('- Plan a trip');
+        expect(prompt).toContain('- Learn pottery');
+        // No avoid section when nothing has been shown yet.
+        expect(core.buildPillsPrompt([])).not.toContain('already seen');
+        expect(core.buildPillsPrompt([], [])).not.toContain('already seen');
+    });
 });
 
 describe('schemas', () => {

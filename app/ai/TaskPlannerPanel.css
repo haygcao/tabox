@@ -312,6 +312,71 @@ html.performance-mode .tp-thinking-text {
     }
 }
 
+/* Reload button: spins up a fresh batch of pill ideas. */
+.tp-pills-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 27px;
+    height: 27px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    color: #4361ee;
+    background: rgba(67, 97, 238, 0.1);
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-theme="dark"] .tp-pills-refresh {
+    color: #7e93ff;
+}
+
+.tp-pills-refresh:hover:not(:disabled) {
+    background: rgba(67, 97, 238, 0.2);
+    box-shadow: 0 0 8px rgba(67, 97, 238, 0.25);
+}
+
+.tp-pills-refresh:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 2px;
+}
+
+.tp-pills-refresh:disabled {
+    cursor: default;
+}
+
+/* Spinning while pills regenerate; keep the button itself full-opacity so the
+   spin reads as activity, not a disabled control. */
+.tp-pills-refresh--spinning:disabled {
+    opacity: 1;
+}
+
+@keyframes tp-refresh-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-pills-refresh--spinning svg {
+        animation: tp-refresh-spin 0.8s linear infinite;
+    }
+}
+
+/* Static affordances when the spin is suppressed. */
+@media (prefers-reduced-motion: reduce) {
+    .tp-pills-refresh--spinning {
+        opacity: 0.6;
+    }
+}
+
+html.performance-mode .tp-pills-refresh--spinning svg {
+    animation: none !important;
+}
+
+html.performance-mode .tp-pills-refresh--spinning {
+    opacity: 0.6;
+}
+
 /* ── Composer ────────────────────────────────────────────────────────────── */
 
 .tp-composer {

@@ -355,3 +355,44 @@ test('user edits to the collection name win over later AI updates', async () => 
 
     expect(screen.getByLabelText('Collection name')).toHaveValue('My Japan Plan');
 });
+
+test('reload button sends taskPlannerRefreshPills and spins while a batch generates', async () => {
+    const pills = ['Plan a trip', 'Research a topic', 'Learn a new skill'];
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ pills }) }) });
+    await renderPanel();
+
+    const reload = screen.getByRole('button', { name: 'New ideas' });
+    expect(reload).toBeEnabled();
+    expect(reload.className).not.toContain('tp-pills-refresh--spinning');
+
+    await act(async () => {
+        fireEvent.click(reload);
+    });
+    expect(sentMessages('taskPlannerRefreshPills')).toHaveLength(1);
+
+    // SW flips pills to null → skeletons show and the button spins, disabled.
+    await fireSessionChange(baseSession({ pills: null }));
+    const spinning = screen.getByRole('button', { name: 'New ideas' });
+    expect(spinning.className).toContain('tp-pills-refresh--spinning');
+    expect(spinning).toBeDisabled();
+    expect(screen.getAllByTestId('tp-pill-skeleton')).toHaveLength(3);
+
+    // Fresh batch lands.
+    await fireSessionChange(baseSession({ pills: ['Plan a heist', 'Learn pottery', 'Track a comet'] }));
+    expect(screen.getByRole('button', { name: 'Plan a heist' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New ideas' })).toBeEnabled();
+});
+
+test('reload button disappears with the pills once the conversation starts', async () => {
+    mockMessages({
+        taskPlannerStart: () => ({ ok: true, state: baseSession({ pills: ['Plan a trip', 'Research a topic', 'Learn'] }) }),
+    });
+    await renderPanel();
+    expect(screen.getByRole('button', { name: 'New ideas' })).toBeInTheDocument();
+
+    await fireSessionChange(baseSession({
+        pills: ['Plan a trip', 'Research a topic', 'Learn'],
+        messages: [{ id: 'm1', role: 'user', content: 'Plan a trip', ts: 1 }],
+    }));
+    expect(screen.queryByRole('button', { name: 'New ideas' })).not.toBeInTheDocument();
+});

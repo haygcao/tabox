@@ -42,19 +42,26 @@ const TURN = {
   ],
 };
 
+const PILLS_2 = { pills: ['Plan a heist movie night', 'Learn pottery', 'Track a comet'] };
+
 // Stub only the chat completion; pills vs turn calls are told apart by their
 // response schema (PILLS_SCHEMA is the only one with a `pills` property).
+// Pill calls rotate through batches so the reload button gets fresh ideas.
 function stubChat(ext) {
-  return ext.background.evaluate(({ pills, turn }) => {
+  return ext.background.evaluate(({ pillBatches, turn }) => {
+    let pillCalls = 0;
     globalThis.TaboxAIClient = {
       ...(globalThis.TaboxAIClient || {}),
       requestChatCompletion: async (messages, opts = {}) => {
         const schema = opts.responseConstraint || {};
         const isPills = !!(schema.properties && schema.properties.pills);
-        return JSON.stringify(isPills ? pills : turn);
+        if (!isPills) return JSON.stringify(turn);
+        const batch = pillBatches[Math.min(pillCalls, pillBatches.length - 1)];
+        pillCalls += 1;
+        return JSON.stringify(batch);
       },
     };
-  }, { pills: PILLS, turn: TURN });
+  }, { pillBatches: [PILLS, PILLS_2], turn: TURN });
 }
 
 async function openPlanner(popup) {
@@ -73,6 +80,11 @@ test('plan a trip end-to-end: greeting, pills, turn, remove, save', async ({ ext
   // Greeting bubble + AI-generated suggestion pills (stubbed).
   await expect(popup.locator('.tp-bubble').first()).toContainText("I'm your Tabox planner");
   await expect(popup.locator('.tp-pill', { hasText: 'Plan a trip' })).toBeVisible();
+
+  // The reload button spins up a fresh batch of ideas, avoiding the seen ones.
+  await popup.locator('.tp-pills-refresh').click();
+  await expect(popup.locator('.tp-pill', { hasText: 'Learn pottery' })).toBeVisible();
+  await expect(popup.locator('.tp-pill', { hasText: 'Plan a trip' })).toHaveCount(0);
 
   // Sending a message lands the assistant reply and the grouped tab set.
   await popup.locator('.tp-input').fill('Plan a trip to Japan');

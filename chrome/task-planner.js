@@ -89,20 +89,34 @@ async function taskPlannerGetState() {
     }
 }
 
-// Generate suggestion pills from the user's collection summaries. Never
-// throws: any failure (offline, signed out, bad JSON, loadSummaries itself
-// throwing) falls back to the static pills.
-async function generatePills(loadSummaries) {
+// Generate suggestion pills from the user's collection summaries, steering
+// away from pills the user has already seen (`avoid`) so every batch feels
+// fresh. Never throws: any failure (offline, signed out, bad JSON,
+// loadSummaries itself throwing) falls back to the static pills.
+async function generatePills(loadSummaries, avoid = []) {
     try {
         const summaries = typeof loadSummaries === 'function' ? (await loadSummaries()) || [] : [];
         const content = await client().requestChatCompletion(
-            [{ role: 'user', content: core.buildPillsPrompt(summaries) }],
-            { responseConstraint: core.PILLS_SCHEMA },
+            [{ role: 'user', content: core.buildPillsPrompt(summaries, avoid) }],
+            // High temperature on purpose: pills are idea generation, and the
+            // avoid-list only works if sampling actually explores.
+            { temperature: 0.9, responseConstraint: core.PILLS_SCHEMA },
         );
         return core.normalizePills(core.parseJSONContent(content)) || core.FALLBACK_PILLS;
     } catch {
         return core.FALLBACK_PILLS;
     }
+}
+
+// Land a freshly generated pill batch on the session (sessionId-guarded) and
+// record it in pillsSeen so the next generation avoids repeats.
+function landPills(sessionId, pills) {
+    return mutateSession((s) => {
+        // Reset or replaced while pills were generating — don't adopt.
+        if (!s || s.sessionId !== sessionId) return null;
+        const seen = [...(s.pillsSeen || []), ...pills].slice(-core.MAX_PILLS_SEEN);
+        return { ...s, pills, pillsSeen: seen, updatedAt: Date.now() };
+    });
 }
 
 // Dedupes concurrent starts (e.g. the popup and full-page view mounting at
@@ -124,15 +138,19 @@ async function doTaskPlannerStart({ force = false, loadSummaries } = {}) {
     try {
         const existing = await healStaleThinking();
         if (existing && !force && Date.now() - (existing.createdAt || 0) < SESSION_MAX_AGE_MS) {
-            // pills === null means the SW died mid-generation on a previous
-            // start — regenerate instead of leaving skeleton pills forever.
-            if (existing.pills !== null) return { ok: true, state: existing };
-            const pills = await generatePills(loadSummaries);
-            const state = await mutateSession((s) => {
-                // Reset or replaced while pills were generating — don't adopt.
-                if (!s || s.sessionId !== existing.sessionId) return null;
-                return { ...s, pills, updatedAt: Date.now() };
+            // Conversation already underway — pills are hidden, so reuse as-is.
+            const hasUserMessage = (existing.messages || []).some((m) => m.role === 'user');
+            if (hasUserMessage) return { ok: true, state: existing };
+            // Unused chat: generate a FRESH batch of ideas on every open (and
+            // this also heals pills === null from a SW death mid-generation).
+            // Flip pills to null first so the panel shows skeletons while the
+            // new batch generates.
+            await mutateSession((s) => {
+                if (!s || s.sessionId !== existing.sessionId || s.pills === null) return null;
+                return { ...s, pills: null, updatedAt: Date.now() };
             });
+            const pills = await generatePills(loadSummaries, existing.pillsSeen || []);
+            const state = await landPills(existing.sessionId, pills);
             return { ok: true, state: state || null };
         }
         const now = Date.now();
@@ -141,6 +159,7 @@ async function doTaskPlannerStart({ force = false, loadSummaries } = {}) {
             status: 'ready',
             greeting: PLANNER_GREETING,
             pills: null, // null = loading; the popup shows skeleton pills
+            pillsSeen: [],
             messages: [],
             groups: [],
             collectionName: '',
@@ -159,11 +178,47 @@ async function doTaskPlannerStart({ force = false, loadSummaries } = {}) {
             generatePills(loadSummaries),
         ]);
 
-        const state = await mutateSession((s) => {
-            // Reset or replaced while pills were generating — don't resurrect.
-            if (!s || s.sessionId !== session.sessionId) return null;
-            return { ...s, pills, updatedAt: Date.now() };
+        const state = await landPills(session.sessionId, pills);
+        return { ok: true, state: state || null };
+    } catch (error) {
+        return { ok: false, error: errorMessage(error) };
+    }
+}
+
+// Dedupes concurrent refreshes (double-clicks, popup + full-page). Unlike
+// start, a refresh during an in-flight refresh just shares the same batch.
+let _refreshPromise = null;
+
+// Regenerate the suggestion pills on demand (the panel's reload button).
+// Ignored once the conversation has a user message — pills are gone by then.
+function taskPlannerRefreshPills(options) {
+    if (_refreshPromise) return _refreshPromise;
+    _refreshPromise = doRefreshPills(options).finally(() => { _refreshPromise = null; });
+    return _refreshPromise;
+}
+
+async function doRefreshPills({ loadSummaries } = {}) {
+    try {
+        let sessionId = null;
+        let seen = [];
+        let ignored = false;
+        const flipped = await mutateSession((s) => {
+            if (!s) return null;
+            if ((s.messages || []).some((m) => m.role === 'user')) {
+                ignored = true;
+                return null;
+            }
+            sessionId = s.sessionId;
+            seen = s.pillsSeen || [];
+            // Skeletons while the new batch generates.
+            return { ...s, pills: null, updatedAt: Date.now() };
         });
+        if (!sessionId) {
+            if (ignored) return { ok: true, state: flipped, ignored: true };
+            return { ok: false, error: 'No active planner session. Start a new plan first.' };
+        }
+        const pills = await generatePills(loadSummaries, seen);
+        const state = await landPills(sessionId, pills);
         return { ok: true, state: state || null };
     } catch (error) {
         return { ok: false, error: errorMessage(error) };
@@ -292,6 +347,7 @@ const taskPlannerApi = {
     THINKING_INTERRUPTED_ERROR,
     taskPlannerGetState,
     taskPlannerStart,
+    taskPlannerRefreshPills,
     taskPlannerSend,
     taskPlannerRemoveTab,
     taskPlannerReset,

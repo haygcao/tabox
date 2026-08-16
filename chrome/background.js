@@ -2595,6 +2595,11 @@ try {
         loadSummaries: () => loadLooseCollectionSummariesBG(3),
       }));
     }
+    if (request.type === 'taskPlannerRefreshPills') {
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerRefreshPills({
+        loadSummaries: () => loadLooseCollectionSummariesBG(3),
+      }));
+    }
     if (request.type === 'taskPlannerSend') {
       const payload = request.payload || {};
       return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerSend({ text: payload.text }));

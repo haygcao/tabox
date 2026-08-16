@@ -467,7 +467,7 @@ export default function SettingsMenu(props) {
             key: 'ai',
             title: 'Tabox AI',
             icon: BsStars,
-            description: 'On-device AI features powered by Chrome’s built-in model. Nothing leaves your computer.',
+            description: 'Cloud AI features powered by Google Gemini 3.5 Flash Lite via OpenRouter. Only tab titles and URLs are sent for processing.',
             items: [
                 {
                     type: 'switch',
@@ -478,7 +478,7 @@ export default function SettingsMenu(props) {
                         id: 'chkTaboxAI',
                         onBeforeChange: handleTaboxAIBeforeChange,
                         'data-tooltip-id': 'main-tooltip',
-                        'data-tooltip-content': 'Powered by DeepSeek V4 Flash via OpenRouter',
+                        'data-tooltip-content': 'Powered by Google Gemini 3.5 Flash Lite via OpenRouter',
                         textOn: <span><BsStars size="14" style={{ marginRight: '8px' }} />Tabox AI: <strong>Enabled</strong></span>,
                         textOff: <span><BsStars size="14" style={{ marginRight: '8px' }} />Tabox AI: <strong>Disabled</strong></span>,
                     },

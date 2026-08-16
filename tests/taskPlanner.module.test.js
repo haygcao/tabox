@@ -34,6 +34,7 @@ async function seedSession(overrides = {}) {
         status: 'ready',
         greeting: planner.PLANNER_GREETING,
         pills: ['Plan a trip', 'Research a topic', 'Compare products'],
+        pillsSeen: ['Plan a trip', 'Research a topic', 'Compare products'],
         messages: [],
         groups: [],
         collectionName: '',
@@ -170,10 +171,109 @@ describe('taskPlannerStart', () => {
         expect(r1.state.sessionId).toBe(r2.state.sessionId);
         expect(r1.state.pills).toEqual(['A pill', 'B pill', 'C pill']);
         // The dedupe window closes with the in-flight start: a later start is
-        // its own call (here reusing the fresh session).
+        // its own call — reusing the session but generating a FRESH batch.
+        const ai2 = mockAI(async () => '{"pills":["D pill","E pill","F pill"]}');
         const r3 = await planner.taskPlannerStart({});
         expect(r3.state.sessionId).toBe(r1.state.sessionId);
+        expect(r3.state.pills).toEqual(['D pill', 'E pill', 'F pill']);
+        expect(ai2).toHaveBeenCalledTimes(1);
+    });
+
+    test('reusing an unused chat generates fresh pills each open, steering away from seen ones', async () => {
+        const ai = mockAI(async () => '{"pills":["Plan a heist","Learn pottery","Track a comet"]}');
+        await seedSession(); // no user messages; pills + pillsSeen populated
+        const res = await planner.taskPlannerStart({});
+        expect(res.ok).toBe(true);
+        expect(res.state.sessionId).toBe('session-1'); // reused, not replaced
+        expect(res.state.pills).toEqual(['Plan a heist', 'Learn pottery', 'Track a comet']);
+        // Previously seen pills ride in the avoid list, and the batch is recorded.
+        const [messages, opts] = ai.mock.calls[0];
+        expect(messages[0].content).toContain('already seen');
+        expect(messages[0].content).toContain('Plan a trip');
+        expect(opts.temperature).toBe(0.9);
+        expect(res.state.pillsSeen).toEqual([
+            'Plan a trip', 'Research a topic', 'Compare products',
+            'Plan a heist', 'Learn pottery', 'Track a comet',
+        ]);
+    });
+
+    test('pillsSeen is capped at MAX_PILLS_SEEN', async () => {
+        mockAI(async () => '{"pills":["New A","New B","New C"]}');
+        const seen = Array.from({ length: core.MAX_PILLS_SEEN }, (_, i) => `Old ${i}`);
+        await seedSession({ pillsSeen: seen });
+        const res = await planner.taskPlannerStart({});
+        expect(res.state.pillsSeen).toHaveLength(core.MAX_PILLS_SEEN);
+        expect(res.state.pillsSeen.slice(-3)).toEqual(['New A', 'New B', 'New C']);
+        expect(res.state.pillsSeen[0]).toBe('Old 3'); // oldest entries dropped
+    });
+});
+
+describe('taskPlannerRefreshPills', () => {
+    test('flips to skeletons, lands a fresh batch avoiding seen pills, records it', async () => {
+        let resolvePills;
+        const ai = mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        await seedSession();
+        const p = planner.taskPlannerRefreshPills({});
+        await tick();
+        expect((await readStored()).pills).toBeNull(); // skeletons while generating
+        resolvePills('{"pills":["Plan a heist","Learn pottery","Track a comet"]}');
+        const res = await p;
+        expect(res.ok).toBe(true);
+        expect(res.state.pills).toEqual(['Plan a heist', 'Learn pottery', 'Track a comet']);
+        expect(res.state.pillsSeen).toContain('Plan a heist');
+        const [messages] = ai.mock.calls[0];
+        expect(messages[0].content).toContain('Plan a trip'); // avoid list
+    });
+
+    test('is ignored once the conversation has a user message', async () => {
+        const ai = mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        await seedSession({ messages: [{ id: 'm1', role: 'user', content: 'hi', ts: 1 }] });
+        const res = await planner.taskPlannerRefreshPills({});
+        expect(res.ok).toBe(true);
+        expect(res.ignored).toBe(true);
+        expect(ai).not.toHaveBeenCalled();
+    });
+
+    test('errors cleanly with no session', async () => {
+        const res = await planner.taskPlannerRefreshPills({});
+        expect(res.ok).toBe(false);
+        expect(res.error).toMatch(/no active planner session/i);
+    });
+
+    test('concurrent refreshes share one AI call', async () => {
+        let resolvePills;
+        const ai = mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        await seedSession();
+        const p1 = planner.taskPlannerRefreshPills({});
+        const p2 = planner.taskPlannerRefreshPills({});
+        await tick();
         expect(ai).toHaveBeenCalledTimes(1);
+        resolvePills('{"pills":["A pill","B pill","C pill"]}');
+        const [r1, r2] = await Promise.all([p1, p2]);
+        expect(r1.state.pills).toEqual(r2.state.pills);
+    });
+
+    test('a reset landing mid-refresh does not resurrect the session', async () => {
+        let resolvePills;
+        mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        await seedSession();
+        const p = planner.taskPlannerRefreshPills({});
+        await tick();
+        await planner.taskPlannerReset();
+        resolvePills('{"pills":["A pill","B pill","C pill"]}');
+        const res = await p;
+        expect(res.ok).toBe(true);
+        expect(res.state).toBeNull();
+        expect(await readStored()).toBeUndefined();
+    });
+
+    test('AI failure falls back to FALLBACK_PILLS, never an error state', async () => {
+        mockAI(async () => { throw new Error('rate_limited'); });
+        await seedSession();
+        const res = await planner.taskPlannerRefreshPills({});
+        expect(res.ok).toBe(true);
+        expect(res.state.pills).toEqual(core.FALLBACK_PILLS);
+        expect(res.state.status).toBe('ready');
     });
 });
 
