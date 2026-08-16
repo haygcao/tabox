@@ -29,6 +29,8 @@ const BACKGROUND_SCRIPTS = [
     'ai-task-duplicate-sweep.js',
     'split-collection.js',
     'ai-task-split-collection.js',
+    'task-planner-core.js',
+    'task-planner.js',
 ];
 
 function buildManifest(base, target) {

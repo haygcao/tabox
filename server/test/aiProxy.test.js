@@ -117,7 +117,7 @@ describe('POST /ai/complete', () => {
     for (const bad of [
       {},
       { messages: [] },
-      { messages: [{ role: 'assistant', content: 'x' }] },
+      { messages: [{ role: 'tool', content: 'x' }] },
       { messages: [{ role: 'user', content: 'x' }], temperature: 9 },
       { messages: [{ role: 'user', content: 'x' }], top_k: 0 },
       { messages: [{ role: 'user', content: 'x' }], response_format: { type: 'text' } },
@@ -126,6 +126,39 @@ describe('POST /ai/complete', () => {
       expect(res.status).toBe(400);
     }
     expect(calls.openrouter).toHaveLength(0);
+  });
+
+  // Task Planner replays chat history, so assistant messages and longer
+  // conversations (up to 32 messages) are valid requests.
+  it('accepts assistant messages and forwards a mixed conversation with roles preserved', async () => {
+    const calls = mockFetch({ completion: '{"name":"Plan"}' });
+    const conversation = [
+      { role: 'system', content: 'rules + current tab set' },
+      { role: 'user', content: 'plan a trip to Japan' },
+      { role: 'assistant', content: '{"groups":[]}' },
+      { role: 'user', content: 'add ryokan options' },
+    ];
+    const res = await worker.fetch(req('t-user', { ...VALID_BODY, messages: conversation }), env(PRO_KV()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ content: '{"name":"Plan"}' });
+    expect(calls.openrouter).toHaveLength(1);
+    expect(JSON.parse(calls.openrouter[0].opts.body).messages).toEqual(conversation);
+  });
+
+  it('accepts up to 32 messages and rejects 33', async () => {
+    const calls = mockFetch();
+    const msgs = (n) => Array.from({ length: n }, (_, i) => ({
+      role: i === 0 ? 'system' : i % 2 === 1 ? 'user' : 'assistant',
+      content: `m${i}`,
+    }));
+    const okRes = await worker.fetch(req('t-user', { messages: msgs(32) }), env(PRO_KV()));
+    expect(okRes.status).toBe(200);
+    expect(calls.openrouter).toHaveLength(1);
+
+    const badRes = await worker.fetch(req('t-user', { messages: msgs(33) }), env(PRO_KV()));
+    expect(badRes.status).toBe(400);
+    expect(await badRes.json()).toEqual({ error: 'invalid_messages' });
+    expect(calls.openrouter).toHaveLength(1);
   });
 
   it('rejects oversized prompts with 413', async () => {

@@ -30,6 +30,8 @@ if (typeof importScripts === 'function') {
     importScripts('ai-task-duplicate-sweep.js');
     importScripts('split-collection.js');
     importScripts('ai-task-split-collection.js');
+    importScripts('task-planner-core.js');
+    importScripts('task-planner.js');
   }
   catch (e) {
     console.error(e);
@@ -2572,6 +2574,40 @@ try {
         state = await globalThis.TaboxAIEngine.finalizeInterrupted();
       }
       return Promise.resolve(state || null);
+    }
+
+    // ── Task Planner ───────────────────────────────────────────────────────
+    // Chat-style AI tool. All session state lives in chrome.storage.local
+    // ('taskPlannerSession', owned by chrome/task-planner.js); the popup is a
+    // detachable observer via storage.onChanged. Every handler awaits its work
+    // inline (MV3 — a detached timeout could die with this worker) and replies
+    // { ok: true, state } or { ok: false, error }. Payload fields live under
+    // request.payload.
+    if (request.type === 'taskPlannerGetState') {
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerGetState());
+    }
+    if (request.type === 'taskPlannerStart') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerStart({
+        force: !!payload.force,
+        // Loose-collection summaries seed the suggestion pills; 3 titles per
+        // collection is plenty — pills need themes, not full contents.
+        loadSummaries: () => loadLooseCollectionSummariesBG(3),
+      }));
+    }
+    if (request.type === 'taskPlannerSend') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerSend({ text: payload.text }));
+    }
+    if (request.type === 'taskPlannerRemoveTab') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerRemoveTab({
+        groupUid: payload.groupUid,
+        tabUid: payload.tabUid,
+      }));
+    }
+    if (request.type === 'taskPlannerReset') {
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerReset());
     }
 
   });

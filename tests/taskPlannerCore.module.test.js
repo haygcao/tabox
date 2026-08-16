@@ -1,0 +1,261 @@
+// chrome/task-planner-core.js — pure prompt builders, schemas, normalizers.
+const core = require('../chrome/task-planner-core.js');
+
+describe('buildPlannerSystemPrompt', () => {
+    test('includes the scope-guard refusal rule and the caps', () => {
+        const prompt = core.buildPlannerSystemPrompt({ groups: [], collectionName: '' });
+        expect(prompt).toContain('I can only help you collect websites');
+        expect(prompt).toContain(`${core.MAX_GROUPS} groups`);
+        expect(prompt).toContain(`${core.MAX_TABS} tabs`);
+        expect(prompt).toContain(`${core.MAX_REPLY_CHARS} characters`);
+        expect(prompt).toContain(`${core.MAX_COLLECTION_NAME} characters`);
+        expect(prompt).toContain(core.GROUP_COLORS.join(', '));
+        expect(prompt).toContain('FULL updated tab set');
+    });
+
+    test('serializes the CURRENT TAB SET with groups, colors, and urls', () => {
+        const prompt = core.buildPlannerSystemPrompt({
+            collectionName: 'Japan Trip',
+            groups: [{
+                uid: 'g1', title: 'Flights', color: 'blue',
+                tabs: [{ uid: 't1', title: 'Google Flights', url: 'https://www.google.com/travel/flights' }],
+            }],
+        });
+        expect(prompt).toContain('CURRENT TAB SET (collection name: "Japan Trip")');
+        expect(prompt).toContain('Group "Flights" [blue]');
+        expect(prompt).toContain('Google Flights (https://www.google.com/travel/flights)');
+    });
+
+    test('marks an empty tab set explicitly', () => {
+        const prompt = core.buildPlannerSystemPrompt({ groups: [], collectionName: '' });
+        expect(prompt).toContain('(empty — no tabs collected yet)');
+        expect(prompt).toContain('"Untitled"');
+    });
+});
+
+describe('buildPillsPrompt', () => {
+    test('lists collection names with sample titles and asks for 3-5 pills', () => {
+        const prompt = core.buildPillsPrompt([
+            { name: 'Japan 2026', tabs: [{ title: 'JAL' }, { title: 'Tokyo hotels' }] },
+            { name: 'Standing desks', tabs: [] },
+        ]);
+        expect(prompt).toContain('"Japan 2026" (e.g. JAL; Tokyo hotels)');
+        expect(prompt).toContain('"Standing desks"');
+        expect(prompt).toContain(`${core.MIN_PILLS} to ${core.MAX_PILLS} pills`);
+        expect(prompt).toContain(`${core.MAX_PILL_CHARS} characters`);
+    });
+
+    test('caps the summaries at PILLS_MAX_COLLECTIONS', () => {
+        const many = Array.from({ length: 30 }, (_, i) => ({ name: `Coll ${i}`, tabs: [] }));
+        const prompt = core.buildPillsPrompt(many);
+        expect(prompt).toContain(`Coll ${core.PILLS_MAX_COLLECTIONS - 1}`);
+        expect(prompt).not.toContain(`Coll ${core.PILLS_MAX_COLLECTIONS}`);
+    });
+
+    test('handles no collections', () => {
+        expect(core.buildPillsPrompt([])).toContain('no saved collections');
+        expect(core.buildPillsPrompt(undefined)).toContain('no saved collections');
+    });
+});
+
+describe('schemas', () => {
+    test('PLANNER_TURN_SCHEMA is strict-mode compatible and matches the contract', () => {
+        const s = core.PLANNER_TURN_SCHEMA;
+        expect(s.required).toEqual(['reply', 'collectionName', 'groups']);
+        expect(s.additionalProperties).toBe(false);
+        expect(s.properties.reply.maxLength).toBe(core.MAX_REPLY_CHARS);
+        expect(s.properties.collectionName.maxLength).toBe(core.MAX_COLLECTION_NAME);
+        expect(s.properties.groups.maxItems).toBe(core.MAX_GROUPS);
+        const group = s.properties.groups.items;
+        expect(group.required).toEqual(['title', 'color', 'tabs']);
+        expect(group.additionalProperties).toBe(false);
+        expect(group.properties.color.enum).toEqual(core.GROUP_COLORS);
+        const tab = group.properties.tabs.items;
+        expect(tab.required).toEqual(['title', 'url']);
+        expect(tab.additionalProperties).toBe(false);
+    });
+
+    test('PILLS_SCHEMA requires 3-5 short strings', () => {
+        const s = core.PILLS_SCHEMA;
+        expect(s.required).toEqual(['pills']);
+        expect(s.additionalProperties).toBe(false);
+        expect(s.properties.pills.minItems).toBe(core.MIN_PILLS);
+        expect(s.properties.pills.maxItems).toBe(core.MAX_PILLS);
+        expect(s.properties.pills.items.maxLength).toBe(core.MAX_PILL_CHARS);
+    });
+
+    test('GROUP_COLORS carries the 9 chrome group colors', () => {
+        expect(core.GROUP_COLORS).toEqual(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
+    });
+
+    test('GROUP_COLORS is the ai-planners list itself (single canonical source)', () => {
+        expect(core.GROUP_COLORS).toBe(require('../chrome/ai-planners.js').GROUP_COLORS);
+    });
+
+    test('exports the session-store bounds enforced by task-planner.js', () => {
+        expect(core.MAX_USER_MESSAGE_CHARS).toBe(4000);
+        expect(core.MAX_STORED_MESSAGES).toBe(50);
+    });
+});
+
+describe('normalizeTurn', () => {
+    const turn = (groups, extra = {}) => ({ reply: 'ok', collectionName: 'Name', groups, ...extra });
+
+    test('drops non-http(s) and malformed URLs, and groups emptied by the filtering', () => {
+        const out = core.normalizeTurn(turn([
+            { title: 'Good', color: 'blue', tabs: [
+                { title: 'A', url: 'https://a.com' },
+                { title: 'Ftp', url: 'ftp://files.example.com' },
+                { title: 'JS', url: 'javascript:alert(1)' },
+                { title: 'Broken', url: 'not a url' },
+                { title: 'NoUrl' },
+            ] },
+            { title: 'All bad', color: 'red', tabs: [{ title: 'X', url: 'chrome://settings' }] },
+        ]), []);
+        expect(out.groups).toHaveLength(1);
+        expect(out.groups[0].tabs.map((t) => t.url)).toEqual(['https://a.com']);
+    });
+
+    test('dedupes repeated URLs across the whole set', () => {
+        const out = core.normalizeTurn(turn([
+            { title: 'One', color: 'blue', tabs: [{ title: 'A', url: 'https://a.com' }] },
+            { title: 'Two', color: 'red', tabs: [{ title: 'A again', url: 'https://a.com' }, { title: 'B', url: 'https://b.com' }] },
+        ]), []);
+        const urls = out.groups.flatMap((g) => g.tabs.map((t) => t.url));
+        expect(urls).toEqual(['https://a.com', 'https://b.com']);
+    });
+
+    test('coerces invalid colors round-robin and keeps valid ones', () => {
+        const out = core.normalizeTurn(turn([
+            { title: 'A', color: 'magenta', tabs: [{ title: 'a', url: 'https://a.com' }] },
+            { title: 'B', color: 'green', tabs: [{ title: 'b', url: 'https://b.com' }] },
+            { title: 'C', color: 'neon', tabs: [{ title: 'c', url: 'https://c.com' }] },
+        ]), []);
+        expect(out.groups[0].color).toBe(core.GROUP_COLORS[0]); // grey
+        expect(out.groups[1].color).toBe('green');
+        expect(out.groups[2].color).toBe(core.GROUP_COLORS[1]); // blue (cursor advanced)
+    });
+
+    test('caps at MAX_GROUPS groups and MAX_TABS tabs total', () => {
+        const groups = Array.from({ length: 12 }, (_, gi) => ({
+            title: `G${gi}`, color: 'blue',
+            tabs: Array.from({ length: 10 }, (_, ti) => ({ title: 't', url: `https://site${gi}-${ti}.com` })),
+        }));
+        const out = core.normalizeTurn(turn(groups), []);
+        expect(out.groups.length).toBeLessThanOrEqual(core.MAX_GROUPS);
+        const total = out.groups.reduce((n, g) => n + g.tabs.length, 0);
+        expect(total).toBe(core.MAX_TABS);
+    });
+
+    test('preserves existing tab uids by URL match and mints uids for new tabs', () => {
+        const prev = [{ uid: 'g-1', title: 'Reading', color: 'blue', tabs: [{ uid: 't-1', title: 'Old', url: 'https://keep.com' }] }];
+        const out = core.normalizeTurn(turn([
+            { title: 'Reading', color: 'blue', tabs: [
+                { title: 'Kept (retitled)', url: 'https://keep.com' },
+                { title: 'New', url: 'https://new.com' },
+            ] },
+        ]), prev);
+        expect(out.groups[0].uid).toBe('g-1'); // group uid preserved by title
+        expect(out.groups[0].tabs[0].uid).toBe('t-1'); // tab uid preserved by URL
+        expect(out.groups[0].tabs[0].title).toBe('Kept (retitled)');
+        expect(out.groups[0].tabs[1].uid).toBeTruthy();
+        expect(out.groups[0].tabs[1].uid).not.toBe('t-1');
+    });
+
+    test('group uid match is case-insensitive on title; new titles mint new uids', () => {
+        const prev = [{ uid: 'g-1', title: 'Flights', color: 'blue', tabs: [{ uid: 't-1', title: 'x', url: 'https://x.com' }] }];
+        const out = core.normalizeTurn(turn([
+            { title: 'FLIGHTS', color: 'blue', tabs: [{ title: 'x', url: 'https://x.com' }] },
+            { title: 'Hotels', color: 'red', tabs: [{ title: 'y', url: 'https://y.com' }] },
+        ]), prev);
+        expect(out.groups[0].uid).toBe('g-1');
+        expect(out.groups[1].uid).not.toBe('g-1');
+    });
+
+    test('an unchanged full set round-trips with identical uids (off-topic turn contract)', () => {
+        const prev = [
+            { uid: 'g-1', title: 'Flights', color: 'blue', tabs: [{ uid: 't-1', title: 'JAL', url: 'https://www.jal.com' }] },
+            { uid: 'g-2', title: 'Hotels', color: 'red', tabs: [{ uid: 't-2', title: 'Booking', url: 'https://www.booking.com' }] },
+        ];
+        const echoed = prev.map(({ title, color, tabs }) => ({ title, color, tabs: tabs.map(({ title: t, url }) => ({ title: t, url })) }));
+        const out = core.normalizeTurn({ reply: 'I can only help you collect websites…', collectionName: 'Trip', groups: echoed }, prev);
+        expect(out.groups).toEqual(prev);
+    });
+
+    test('clamps reply/collectionName and falls back to a default reply', () => {
+        const out = core.normalizeTurn({
+            reply: `  ${'r'.repeat(1000)}  `,
+            collectionName: 'n'.repeat(200),
+            groups: [],
+        }, []);
+        expect(out.reply).toHaveLength(core.MAX_REPLY_CHARS);
+        expect(out.collectionName).toHaveLength(core.MAX_COLLECTION_NAME);
+        const empty = core.normalizeTurn({ reply: '   ', collectionName: '', groups: [] }, []);
+        expect(empty.reply).toBe(core.DEFAULT_REPLY);
+    });
+
+    test('tolerates garbage input', () => {
+        expect(core.normalizeTurn(null, [])).toEqual({ reply: core.DEFAULT_REPLY, collectionName: '', groups: [] });
+        expect(core.normalizeTurn({ groups: 'nope' }, undefined).groups).toEqual([]);
+    });
+});
+
+describe('windowHistory', () => {
+    test('keeps the last `max` messages projected to role/content', () => {
+        const messages = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }));
+        const win = core.windowHistory(messages, 12);
+        expect(win).toHaveLength(12);
+        expect(win[0]).toEqual({ role: 'user', content: 'msg 8' });
+        expect(win[11]).toEqual({ role: 'assistant', content: 'msg 19' });
+        expect(Object.keys(win[0])).toEqual(['role', 'content']);
+    });
+
+    test('defaults to HISTORY_WINDOW and handles short/absent input', () => {
+        const messages = Array.from({ length: 20 }, (_, i) => ({ role: 'user', content: `m${i}` }));
+        expect(core.windowHistory(messages)).toHaveLength(core.HISTORY_WINDOW);
+        expect(core.windowHistory([{ role: 'user', content: 'only' }])).toHaveLength(1);
+        expect(core.windowHistory(undefined)).toEqual([]);
+    });
+});
+
+describe('normalizePills', () => {
+    test('returns 3-5 trimmed pills capped at MAX_PILL_CHARS', () => {
+        const out = core.normalizePills({ pills: ['  Plan a trip  ', 'Research a topic', `${'x'.repeat(60)}`, 'Compare products'] });
+        expect(out).toEqual(['Plan a trip', 'Research a topic', 'x'.repeat(core.MAX_PILL_CHARS), 'Compare products']);
+    });
+
+    test('dedupes and caps at MAX_PILLS', () => {
+        const out = core.normalizePills({ pills: ['A thing', 'a thing', 'B', 'C', 'D', 'E', 'F'] });
+        expect(out).toEqual(['A thing', 'B', 'C', 'D', 'E']);
+    });
+
+    test('returns null when unusable (caller falls back)', () => {
+        expect(core.normalizePills(null)).toBeNull();
+        expect(core.normalizePills({})).toBeNull();
+        expect(core.normalizePills({ pills: 'nope' })).toBeNull();
+        expect(core.normalizePills({ pills: ['only', 'two'] })).toBeNull();
+        expect(core.normalizePills({ pills: ['', '  ', null] })).toBeNull();
+    });
+
+    test('FALLBACK_PILLS is a valid pill set itself', () => {
+        expect(core.normalizePills({ pills: core.FALLBACK_PILLS })).toEqual(core.FALLBACK_PILLS);
+        core.FALLBACK_PILLS.forEach((p) => expect(p.length).toBeLessThanOrEqual(core.MAX_PILL_CHARS));
+    });
+});
+
+describe('parseJSONContent', () => {
+    test('parses plain and fenced JSON', () => {
+        expect(core.parseJSONContent('{"a":1}')).toEqual({ a: 1 });
+        expect(core.parseJSONContent('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+        expect(core.parseJSONContent('```\n{"a":1}\n```')).toEqual({ a: 1 });
+    });
+});
+
+describe('mintUid', () => {
+    test('mints unique string ids', () => {
+        const a = core.mintUid();
+        const b = core.mintUid();
+        expect(typeof a).toBe('string');
+        expect(a).not.toBe(b);
+    });
+});

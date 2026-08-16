@@ -63,6 +63,35 @@ async function promptForJSON(session, prompt, schema, signal) {
 const AI_REQUEST_TIMEOUT_MS = 90_000;
 
 async function requestCompletion(config, text, { responseConstraint, signal } = {}) {
+    const messages = [];
+    if (config.systemPrompt) messages.push({ role: 'system', content: config.systemPrompt });
+    messages.push({ role: 'user', content: text });
+    return performCompletionRequest(messages, {
+        temperature: config.temperature,
+        topK: config.topK,
+        responseConstraint,
+        signal,
+    });
+}
+
+// The Worker's /ai/complete caps a request at 32 messages (system + windowed
+// chat history). Callers window their history; this guard turns an overflow
+// into a clear client-side error instead of a Worker 400.
+const MAX_CHAT_MESSAGES = 32;
+
+// Multi-turn chat completion: accepts a FULL messages array (system/user/
+// assistant roles — the Worker accepts assistant since the Task Planner
+// change). One-shot prompts should keep using sessions/requestCompletion.
+async function requestChatCompletion(messages, { temperature, topK, responseConstraint, signal } = {}) {
+    if (!Array.isArray(messages) || messages.length === 0) throw new Error('Tabox AI: no messages to send');
+    if (messages.length > MAX_CHAT_MESSAGES) throw new Error(`Tabox AI: too many messages (max ${MAX_CHAT_MESSAGES})`);
+    // Project to the exact wire shape so stray fields (ids, timestamps) from
+    // stored transcripts never reach the Worker's strict validator.
+    const wireMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+    return performCompletionRequest(wireMessages, { temperature, topK, responseConstraint, signal });
+}
+
+async function performCompletionRequest(messages, { temperature, topK, responseConstraint, signal } = {}) {
     const token = await aiClientBgUtils.getAuthTokenForAI();
     if (!token) throw new Error('Tabox AI: sign in to Tabox to use AI features');
     // One internal controller drives the fetch; the caller's signal and the
@@ -78,12 +107,9 @@ async function requestCompletion(config, text, { responseConstraint, signal } = 
         else signal.addEventListener('abort', onCallerAbort, { once: true });
     }
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, AI_REQUEST_TIMEOUT_MS);
-    const messages = [];
-    if (config.systemPrompt) messages.push({ role: 'system', content: config.systemPrompt });
-    messages.push({ role: 'user', content: text });
     const body = { messages };
-    if (config.temperature !== undefined) body.temperature = config.temperature;
-    if (config.topK !== undefined) body.top_k = config.topK;
+    if (temperature !== undefined) body.temperature = temperature;
+    if (topK !== undefined) body.top_k = topK;
     if (responseConstraint) {
         body.response_format = {
             type: 'json_schema',
@@ -136,7 +162,7 @@ function parseJSONContent(raw) {
     return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
-const aiClientApi = { aiAvailability, createAISession, promptForJSON };
+const aiClientApi = { aiAvailability, createAISession, promptForJSON, requestChatCompletion };
 
 /* istanbul ignore next */
 if (typeof globalThis !== 'undefined') globalThis.TaboxAIClient = aiClientApi;

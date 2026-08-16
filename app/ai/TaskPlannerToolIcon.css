@@ -1,0 +1,96 @@
+/* Animated icon for the Task Planner AI hero card. Colors inherit from the
+ * hero icon color (currentColor). Animations trigger on hover of the
+ * parent card and play a single iteration — see TaskPlannerToolIcon.js. */
+
+.tpi-bubble {
+    stroke: currentColor;
+    stroke-width: 1.7;
+    fill: none;
+    opacity: 0.55;
+}
+
+.tpi-route {
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    fill: none;
+    /* pathLength="100" on the element — fully drawn at rest. */
+    stroke-dasharray: 100;
+    stroke-dashoffset: 0;
+}
+
+.tpi-dot {
+    fill: currentColor;
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.tpi-spark {
+    fill: currentColor;
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+/* ── Hover: the plan draws itself, single iteration ──────────────────────── */
+/* The Task Planner is featured-only, so only the hero card can host it. */
+.ai-hero-card[data-tool-id="task-planner"]:hover .tpi-route {
+    will-change: stroke-dashoffset;
+    animation: tpi-route-draw 1.3s cubic-bezier(0.65, 0, 0.35, 1) 1;
+}
+
+.ai-hero-card[data-tool-id="task-planner"]:hover .tpi-dot {
+    will-change: transform;
+    animation: tpi-dot-pop 1.3s cubic-bezier(0.65, 0, 0.35, 1) 1;
+}
+
+.ai-hero-card[data-tool-id="task-planner"]:hover .tpi-spark {
+    will-change: transform;
+    animation: tpi-spark-twinkle 1.3s cubic-bezier(0.65, 0, 0.35, 1) 1;
+}
+
+/* Dots pop in sequence as the route reaches them. Staggered via per-dot
+ * animation-delay; each returns to full size, matching the static state. */
+.ai-hero-card[data-tool-id="task-planner"]:hover .tpi-dot-2 { animation-delay: 0.12s; }
+.ai-hero-card[data-tool-id="task-planner"]:hover .tpi-dot-3 { animation-delay: 0.24s; }
+.ai-hero-card[data-tool-id="task-planner"]:hover .tpi-dot-4 { animation-delay: 0.36s; }
+
+/* Route: cleared, then redrawn start→end — ending full (static state). */
+@keyframes tpi-route-draw {
+    0%   { stroke-dashoffset: 100; }
+    14%  { stroke-dashoffset: 100; }
+    72%  { stroke-dashoffset: 0; }
+    100% { stroke-dashoffset: 0; }
+}
+
+/* Waypoints: vanish, then pop back with a slight overshoot. */
+@keyframes tpi-dot-pop {
+    0%   { transform: scale(0); }
+    22%  { transform: scale(0); }
+    48%  { transform: scale(1.45); }
+    64%  { transform: scale(1); }
+    100% { transform: scale(1); }
+}
+
+/* Sparkle: a quick twinkle (shrink + quarter turn, then back). */
+@keyframes tpi-spark-twinkle {
+    0%   { transform: scale(1) rotate(0deg); }
+    30%  { transform: scale(0.35) rotate(45deg); }
+    60%  { transform: scale(1.25) rotate(90deg); }
+    80%  { transform: scale(1) rotate(90deg); }
+    100% { transform: scale(1) rotate(90deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ai-hero-card[data-tool-id="task-planner"]:hover .tpi-route,
+    .ai-hero-card[data-tool-id="task-planner"]:hover .tpi-dot,
+    .ai-hero-card[data-tool-id="task-planner"]:hover .tpi-spark {
+        animation: none;
+    }
+}
+
+html.performance-mode .ai-hero-card[data-tool-id="task-planner"]:hover .tpi-route,
+html.performance-mode .ai-hero-card[data-tool-id="task-planner"]:hover .tpi-dot,
+html.performance-mode .ai-hero-card[data-tool-id="task-planner"]:hover .tpi-spark {
+    animation: none;
+}

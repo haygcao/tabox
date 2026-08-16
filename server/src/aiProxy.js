@@ -1,13 +1,17 @@
 // AI proxy: the extension never ships or sees the OpenRouter API key — it
 // lives only in the OPENROUTER_API_KEY Worker secret. The model and output
-// budget are pinned server-side so a signed-in caller can't turn this into a
-// general-purpose LLM proxy; the request surface is limited to exactly what
-// the Tabox AI clients send (messages + sampling params + a JSON schema).
+// budget are pinned server-side, and abuse is bounded by the caller-side
+// checks in the route handler plus the limits here: signed-in Pro users only,
+// rate limits (20/min, 500/day), a 300k-char total prompt budget, and at most
+// 32 system/user/assistant messages (multi-turn support added for the Task
+// Planner chat). The request surface is rebuilt from an allowlist of fields —
+// nothing from the client body is forwarded as-is.
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL = 'google/gemini-3.5-flash-lite';
 const MAX_OUTPUT_TOKENS = 8192;
 const PROVIDER_PREFERENCES = { sort: 'throughput', require_parameters: true };
-const MAX_MESSAGES = 8;
+// Mirrored client-side as MAX_CHAT_MESSAGES in chrome/ai-client.js — keep in sync.
+const MAX_MESSAGES = 32;
 // Total prompt budget per request. Generous for the biggest legit prompt
 // (auto-arrange over a large library) while still bounding per-call spend.
 const MAX_CONTENT_CHARS = 300_000;
@@ -22,7 +26,7 @@ export function validateAIRequest(body) {
   }
   let totalChars = 0;
   for (const message of messages) {
-    if (!message || (message.role !== 'system' && message.role !== 'user') || typeof message.content !== 'string') {
+    if (!message || (message.role !== 'system' && message.role !== 'user' && message.role !== 'assistant') || typeof message.content !== 'string') {
       return { ok: false, error: 'invalid_messages' };
     }
     totalChars += message.content.length;

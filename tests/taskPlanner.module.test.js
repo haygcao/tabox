@@ -1,0 +1,520 @@
+// chrome/task-planner.js — session store + handlers, with a mocked AI client
+// and stateful storage. The AI client global is read lazily by the module, so
+// each test installs its own mock on globalThis.TaboxAIClient.
+require('jest-webextension-mock');
+const { installStatefulLocalStorage } = require('./helpers/statefulLocalStorage');
+installStatefulLocalStorage();
+
+const core = require('../chrome/task-planner-core.js');
+const planner = require('../chrome/task-planner.js');
+
+const KEY = planner.TASK_PLANNER_SESSION_KEY;
+
+const readStored = async () => (await browser.storage.local.get(KEY))[KEY];
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+function mockAI(impl) {
+    const fn = jest.fn(impl);
+    globalThis.TaboxAIClient = { requestChatCompletion: fn };
+    return fn;
+}
+
+function turnJSON({ reply = 'Here you go', collectionName = 'My Plan', groups } = {}) {
+    return JSON.stringify({
+        reply,
+        collectionName,
+        groups: groups || [{ title: 'Reading', color: 'blue', tabs: [{ title: 'MDN', url: 'https://developer.mozilla.org' }] }],
+    });
+}
+
+async function seedSession(overrides = {}) {
+    const now = Date.now();
+    const session = {
+        sessionId: 'session-1',
+        status: 'ready',
+        greeting: planner.PLANNER_GREETING,
+        pills: ['Plan a trip', 'Research a topic', 'Compare products'],
+        messages: [],
+        groups: [],
+        collectionName: '',
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        ...overrides,
+    };
+    await browser.storage.local.set({ [KEY]: session });
+    return session;
+}
+
+beforeEach(async () => {
+    await browser.storage.local.clear();
+    mockAI(async () => turnJSON());
+});
+
+describe('taskPlannerStart', () => {
+    test('mints a session with the contract shape and AI-generated pills', async () => {
+        const ai = mockAI(async () => '{"pills":["Plan a trip","Research desks","Learn Spanish"]}');
+        const loadSummaries = jest.fn(async () => [{ name: 'Japan 2026', tabs: [{ title: 'JAL' }] }]);
+        const res = await planner.taskPlannerStart({ loadSummaries });
+        expect(res.ok).toBe(true);
+        const s = res.state;
+        expect(s.sessionId).toBeTruthy();
+        expect(s.status).toBe('ready');
+        expect(s.greeting).toBe(planner.PLANNER_GREETING);
+        expect(s.pills).toEqual(['Plan a trip', 'Research desks', 'Learn Spanish']);
+        expect(s.messages).toEqual([]);
+        expect(s.groups).toEqual([]);
+        expect(s.collectionName).toBe('');
+        expect(s.error).toBeNull();
+        expect(typeof s.createdAt).toBe('number');
+        expect(typeof s.updatedAt).toBe('number');
+        expect(await readStored()).toEqual(s);
+        // Pills call fed by the collection summaries, constrained by PILLS_SCHEMA.
+        expect(loadSummaries).toHaveBeenCalled();
+        const [messages, opts] = ai.mock.calls[0];
+        expect(messages).toHaveLength(1);
+        expect(messages[0].content).toContain('Japan 2026');
+        expect(opts.responseConstraint).toBe(core.PILLS_SCHEMA);
+    });
+
+    test('falls back to FALLBACK_PILLS when the AI call fails — never an error state', async () => {
+        mockAI(async () => { throw new Error('sign in to Tabox to use AI features'); });
+        const res = await planner.taskPlannerStart({ loadSummaries: async () => [] });
+        expect(res.ok).toBe(true);
+        expect(res.state.status).toBe('ready');
+        expect(res.state.error).toBeNull();
+        expect(res.state.pills).toEqual(core.FALLBACK_PILLS);
+    });
+
+    test('falls back when the model returns unusable pills (too few)', async () => {
+        mockAI(async () => '{"pills":["Only", "Two"]}');
+        const res = await planner.taskPlannerStart({});
+        expect(res.state.pills).toEqual(core.FALLBACK_PILLS);
+    });
+
+    test('falls back when loadSummaries itself throws', async () => {
+        const ai = mockAI(async () => '{"pills":["A","B","C"]}');
+        const res = await planner.taskPlannerStart({ loadSummaries: async () => { throw new Error('storage broke'); } });
+        expect(res.ok).toBe(true);
+        expect(res.state.pills).toEqual(core.FALLBACK_PILLS);
+        expect(ai).not.toHaveBeenCalled();
+    });
+
+    test('returns the existing session when it is <24h old and not forced', async () => {
+        const ai = mockAI(async () => turnJSON());
+        const existing = await seedSession({ messages: [{ id: 'm1', role: 'user', content: 'hi', ts: 1 }] });
+        const res = await planner.taskPlannerStart({});
+        expect(res.state).toEqual(existing);
+        expect(ai).not.toHaveBeenCalled(); // no pill regeneration for a reused session
+    });
+
+    test('force mints a fresh session even when a recent one exists', async () => {
+        mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        await seedSession();
+        const res = await planner.taskPlannerStart({ force: true });
+        expect(res.state.sessionId).not.toBe('session-1');
+        expect(res.state.messages).toEqual([]);
+    });
+
+    test('an expired (>24h) session is replaced', async () => {
+        mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        const old = Date.now() - planner.SESSION_MAX_AGE_MS - 1000;
+        await seedSession({ createdAt: old, updatedAt: old });
+        const res = await planner.taskPlannerStart({});
+        expect(res.state.sessionId).not.toBe('session-1');
+    });
+
+    test('a reset landing while pills generate does not resurrect the session', async () => {
+        let resolvePills;
+        mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        const startPromise = planner.taskPlannerStart({});
+        await tick();
+        expect(await readStored()).toBeTruthy(); // session written, pills pending
+        await planner.taskPlannerReset();
+        resolvePills('{"pills":["A pill","B pill","C pill"]}');
+        const res = await startPromise;
+        expect(res.ok).toBe(true);
+        expect(res.state).toBeNull();
+        expect(await readStored()).toBeUndefined();
+    });
+
+    test('regenerates pills on reuse when the session persisted with pills null (SW died mid-generation)', async () => {
+        const ai = mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        await seedSession({ pills: null });
+        const res = await planner.taskPlannerStart({ loadSummaries: async () => [] });
+        expect(res.ok).toBe(true);
+        expect(res.state.sessionId).toBe('session-1'); // reused, not replaced
+        expect(res.state.pills).toEqual(['A pill', 'B pill', 'C pill']);
+        expect((await readStored()).pills).toEqual(['A pill', 'B pill', 'C pill']);
+        expect(ai).toHaveBeenCalledTimes(1);
+    });
+
+    test('pills regen on reuse falls back to FALLBACK_PILLS on AI failure', async () => {
+        mockAI(async () => { throw new Error('sign in to Tabox to use AI features'); });
+        await seedSession({ pills: null });
+        const res = await planner.taskPlannerStart({});
+        expect(res.ok).toBe(true);
+        expect(res.state.pills).toEqual(core.FALLBACK_PILLS);
+    });
+
+    test('two concurrent starts share one session and one pill generation', async () => {
+        let resolvePills;
+        const ai = mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        const p1 = planner.taskPlannerStart({});
+        const p2 = planner.taskPlannerStart({});
+        await tick();
+        expect(ai).toHaveBeenCalledTimes(1); // second start piggybacks on the first
+        resolvePills('{"pills":["A pill","B pill","C pill"]}');
+        const [r1, r2] = await Promise.all([p1, p2]);
+        expect(r1.ok).toBe(true);
+        expect(r1.state.sessionId).toBe(r2.state.sessionId);
+        expect(r1.state.pills).toEqual(['A pill', 'B pill', 'C pill']);
+        // The dedupe window closes with the in-flight start: a later start is
+        // its own call (here reusing the fresh session).
+        const r3 = await planner.taskPlannerStart({});
+        expect(r3.state.sessionId).toBe(r1.state.sessionId);
+        expect(ai).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('taskPlannerSend', () => {
+    test('happy path: appends both messages, lands normalized groups + name, status ready', async () => {
+        const ai = mockAI(async () => turnJSON({ reply: 'Added some reading.', collectionName: 'Web Dev' }));
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: '  plan my reading  ' });
+        expect(res.ok).toBe(true);
+        const s = res.state;
+        expect(s.status).toBe('ready');
+        expect(s.error).toBeNull();
+        expect(s.messages).toHaveLength(2);
+        expect(s.messages[0]).toMatchObject({ role: 'user', content: 'plan my reading' });
+        expect(s.messages[1]).toMatchObject({ role: 'assistant', content: 'Added some reading.' });
+        expect(s.messages.every((m) => m.id && typeof m.ts === 'number')).toBe(true);
+        expect(s.collectionName).toBe('Web Dev');
+        expect(s.groups).toHaveLength(1);
+        expect(s.groups[0]).toMatchObject({ title: 'Reading', color: 'blue' });
+        expect(s.groups[0].uid).toBeTruthy();
+        expect(s.groups[0].tabs[0]).toMatchObject({ title: 'MDN', url: 'https://developer.mozilla.org' });
+        expect(s.groups[0].tabs[0].uid).toBeTruthy();
+        expect(await readStored()).toEqual(s);
+        // AI turn contract: system (rules + current tab set) + history + user, temp 0.7, turn schema.
+        const [messages, opts] = ai.mock.calls[0];
+        expect(messages[0].role).toBe('system');
+        expect(messages[0].content).toContain('CURRENT TAB SET');
+        expect(messages[messages.length - 1]).toEqual({ role: 'user', content: 'plan my reading' });
+        expect(opts.temperature).toBe(0.7);
+        expect(opts.responseConstraint).toBe(core.PLANNER_TURN_SCHEMA);
+    });
+
+    test('windows the history to HISTORY_WINDOW display messages', async () => {
+        const ai = mockAI(async () => turnJSON());
+        const messages = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }));
+        await seedSession({ messages });
+        await planner.taskPlannerSend({ text: 'next' });
+        const [sent] = ai.mock.calls[0];
+        expect(sent).toHaveLength(1 + core.HISTORY_WINDOW + 1); // system + window + new user
+        expect(sent[1]).toEqual({ role: 'user', content: 'msg 8' });
+    });
+
+    test('an off-topic turn (full set echoed back) keeps groups identical, uids included', async () => {
+        const prevGroups = [
+            { uid: 'g-1', title: 'Flights', color: 'blue', tabs: [{ uid: 't-1', title: 'JAL', url: 'https://www.jal.com' }] },
+        ];
+        mockAI(async () => JSON.stringify({
+            reply: 'I can only help you collect websites for a topic.',
+            collectionName: 'Trip',
+            groups: [{ title: 'Flights', color: 'blue', tabs: [{ title: 'JAL', url: 'https://www.jal.com' }] }],
+        }));
+        await seedSession({ groups: prevGroups, collectionName: 'Trip' });
+        const res = await planner.taskPlannerSend({ text: 'what is 2+2?' });
+        expect(res.state.groups).toEqual(prevGroups);
+        expect(res.state.messages[1].content).toMatch(/^I can only help you collect websites/);
+    });
+
+    test('parses a markdown-fenced JSON reply', async () => {
+        mockAI(async () => '```json\n' + turnJSON() + '\n```');
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'go' });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups).toHaveLength(1);
+    });
+
+    test('is ignored while a turn is already thinking (no second AI call, flagged ignored)', async () => {
+        const ai = mockAI(async () => turnJSON());
+        const thinking = await seedSession({ status: 'thinking' });
+        const res = await planner.taskPlannerSend({ text: 'another' });
+        expect(res.ok).toBe(true);
+        expect(res.ignored).toBe(true);
+        expect(res.state).toEqual(thinking);
+        expect(ai).not.toHaveBeenCalled();
+    });
+
+    test('ignores empty text (flagged ignored)', async () => {
+        const ai = mockAI(async () => turnJSON());
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: '   ' });
+        expect(res.ok).toBe(true);
+        expect(res.ignored).toBe(true);
+        expect(res.state.messages).toEqual([]);
+        expect(ai).not.toHaveBeenCalled();
+    });
+
+    test('two rapid sends: only the first appends and calls the AI, the second is ignored', async () => {
+        let resolveTurn;
+        const ai = mockAI(() => new Promise((resolve) => { resolveTurn = resolve; }));
+        await seedSession();
+        // Fired back-to-back with no tick in between: both pass any naive
+        // pre-check, but the single read-merge-write serializes the verdicts.
+        const first = planner.taskPlannerSend({ text: 'plan' });
+        const second = planner.taskPlannerSend({ text: 'plan again' });
+        const resSecond = await second;
+        expect(resSecond.ok).toBe(true);
+        expect(resSecond.ignored).toBe(true);
+        expect(ai).toHaveBeenCalledTimes(1);
+        resolveTurn(turnJSON());
+        const resFirst = await first;
+        expect(resFirst.ok).toBe(true);
+        expect(resFirst.ignored).toBeUndefined();
+        const stored = await readStored();
+        expect(stored.messages.map((m) => m.content)).toEqual(['plan', 'Here you go']);
+    });
+
+    test('clamps user text to MAX_USER_MESSAGE_CHARS in both the transcript and the prompt', async () => {
+        const ai = mockAI(async () => turnJSON());
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'x'.repeat(core.MAX_USER_MESSAGE_CHARS + 500) });
+        expect(res.ok).toBe(true);
+        expect(res.state.messages[0].content).toHaveLength(core.MAX_USER_MESSAGE_CHARS);
+        const [sent] = ai.mock.calls[0];
+        expect(sent[sent.length - 1].content).toHaveLength(core.MAX_USER_MESSAGE_CHARS);
+    });
+
+    test('caps the stored transcript at MAX_STORED_MESSAGES', async () => {
+        mockAI(async () => turnJSON({ reply: 'latest' }));
+        const messages = Array.from({ length: core.MAX_STORED_MESSAGES + 10 }, (_, i) => (
+            { id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }
+        ));
+        await seedSession({ messages });
+        const res = await planner.taskPlannerSend({ text: 'next' });
+        expect(res.state.messages).toHaveLength(core.MAX_STORED_MESSAGES);
+        // The newest messages survive the cap; the oldest are dropped.
+        const contents = res.state.messages.map((m) => m.content);
+        expect(contents[contents.length - 2]).toBe('next');
+        expect(contents[contents.length - 1]).toBe('latest');
+        expect(contents).not.toContain('msg 0');
+    });
+
+    test('errors cleanly with no session', async () => {
+        const res = await planner.taskPlannerSend({ text: 'hello' });
+        expect(res.ok).toBe(false);
+        expect(res.error).toMatch(/no active planner session/i);
+    });
+
+    test('AI failure → status error + message, transcript intact for retry', async () => {
+        mockAI(async () => { throw new Error('Tabox AI: request timed out after 90s'); });
+        await seedSession({ messages: [{ id: 'm0', role: 'user', content: 'earlier', ts: 1 }] });
+        const res = await planner.taskPlannerSend({ text: 'plan a trip' });
+        expect(res.ok).toBe(false);
+        expect(res.error).toContain('timed out');
+        const stored = await readStored();
+        expect(stored.status).toBe('error');
+        expect(stored.error).toContain('timed out');
+        expect(stored.messages.map((m) => m.content)).toEqual(['earlier', 'plan a trip']); // kept
+    });
+
+    test('unparseable model output → error state, transcript intact', async () => {
+        mockAI(async () => 'not json at all');
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'plan' });
+        expect(res.ok).toBe(false);
+        const stored = await readStored();
+        expect(stored.status).toBe('error');
+        expect(stored.messages).toHaveLength(1);
+    });
+
+    test('a reset mid-turn drops the result instead of resurrecting the session', async () => {
+        let resolveTurn;
+        mockAI(() => new Promise((resolve) => { resolveTurn = resolve; }));
+        await seedSession();
+        const sendPromise = planner.taskPlannerSend({ text: 'plan' });
+        await tick();
+        expect((await readStored()).status).toBe('thinking');
+        await planner.taskPlannerReset();
+        resolveTurn(turnJSON());
+        const res = await sendPromise;
+        expect(res.ok).toBe(true);
+        expect(res.state).toBeNull();
+        expect(await readStored()).toBeUndefined();
+    });
+
+    test('a new session started mid-turn does not adopt the stale result (sessionId guard)', async () => {
+        let resolveTurn;
+        mockAI(() => new Promise((resolve) => { resolveTurn = resolve; }));
+        await seedSession();
+        const sendPromise = planner.taskPlannerSend({ text: 'plan' });
+        await tick();
+        expect((await readStored()).status).toBe('thinking');
+        // Reset and start a FRESH session while the old turn is still awaiting the AI.
+        await planner.taskPlannerReset();
+        mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        const fresh = await planner.taskPlannerStart({});
+        expect(fresh.state.sessionId).not.toBe('session-1');
+        resolveTurn(turnJSON());
+        const res = await sendPromise;
+        expect(res.ok).toBe(true);
+        const stored = await readStored();
+        expect(stored.sessionId).toBe(fresh.state.sessionId);
+        expect(stored.messages).toEqual([]); // the stale turn did not graft on
+        expect(stored.groups).toEqual([]);
+        expect(stored.status).toBe('ready');
+    });
+
+    test('a stale AI failure does not land its error on a freshly started session (sessionId guard)', async () => {
+        let rejectTurn;
+        mockAI(() => new Promise((_, reject) => { rejectTurn = reject; }));
+        await seedSession();
+        const sendPromise = planner.taskPlannerSend({ text: 'plan' });
+        await tick();
+        await planner.taskPlannerReset();
+        mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        const fresh = await planner.taskPlannerStart({});
+        rejectTurn(new Error('Tabox AI: request timed out after 90s'));
+        const res = await sendPromise;
+        expect(res.ok).toBe(false); // the caller still learns its turn failed…
+        const stored = await readStored();
+        expect(stored.sessionId).toBe(fresh.state.sessionId);
+        expect(stored.status).toBe('ready'); // …but the new session stays clean
+        expect(stored.error).toBeNull();
+    });
+
+    test("an overlapping ignored send must not clear the live turn's heal protection (counter, not boolean)", async () => {
+        let resolveTurn;
+        mockAI(() => new Promise((resolve) => { resolveTurn = resolve; }));
+        await seedSession();
+        const sendA = planner.taskPlannerSend({ text: 'plan' });
+        await tick();
+        expect((await readStored()).status).toBe('thinking');
+        // Send B collides with A's thinking turn: it settles (and decrements
+        // its own in-flight count) while A is still awaiting the AI.
+        const resB = await planner.taskPlannerSend({ text: 'again' });
+        expect(resB.ignored).toBe(true);
+        // A boolean flag cleared by B's exit would let this heal kill A's live turn.
+        const mid = await planner.taskPlannerGetState();
+        expect(mid.state.status).toBe('thinking');
+        resolveTurn(turnJSON());
+        const res = await sendA;
+        expect(res.ok).toBe(true);
+        expect((await readStored()).status).toBe('ready');
+    });
+});
+
+describe('taskPlannerRemoveTab', () => {
+    test('removes a tab and keeps non-empty groups', async () => {
+        await seedSession({ groups: [
+            { uid: 'g-1', title: 'A', color: 'blue', tabs: [{ uid: 't-1', title: '1', url: 'https://1.com' }, { uid: 't-2', title: '2', url: 'https://2.com' }] },
+            { uid: 'g-2', title: 'B', color: 'red', tabs: [{ uid: 't-3', title: '3', url: 'https://3.com' }] },
+        ] });
+        const before = (await readStored()).updatedAt;
+        const res = await planner.taskPlannerRemoveTab({ groupUid: 'g-1', tabUid: 't-1' });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups).toHaveLength(2);
+        expect(res.state.groups[0].tabs.map((t) => t.uid)).toEqual(['t-2']);
+        expect(res.state.updatedAt).toBeGreaterThanOrEqual(before);
+    });
+
+    test('dropping the last tab drops the group', async () => {
+        await seedSession({ groups: [
+            { uid: 'g-1', title: 'A', color: 'blue', tabs: [{ uid: 't-1', title: '1', url: 'https://1.com' }] },
+        ] });
+        const res = await planner.taskPlannerRemoveTab({ groupUid: 'g-1', tabUid: 't-1' });
+        expect(res.state.groups).toEqual([]);
+    });
+
+    test('errors cleanly with no session', async () => {
+        const res = await planner.taskPlannerRemoveTab({ groupUid: 'g', tabUid: 't' });
+        expect(res.ok).toBe(false);
+    });
+
+    test('concurrent removals are serialized — neither is lost', async () => {
+        await seedSession({ groups: [
+            { uid: 'g-1', title: 'A', color: 'blue', tabs: [
+                { uid: 't-1', title: '1', url: 'https://1.com' },
+                { uid: 't-2', title: '2', url: 'https://2.com' },
+                { uid: 't-3', title: '3', url: 'https://3.com' },
+            ] },
+        ] });
+        await Promise.all([
+            planner.taskPlannerRemoveTab({ groupUid: 'g-1', tabUid: 't-1' }),
+            planner.taskPlannerRemoveTab({ groupUid: 'g-1', tabUid: 't-2' }),
+        ]);
+        const stored = await readStored();
+        expect(stored.groups[0].tabs.map((t) => t.uid)).toEqual(['t-3']);
+    });
+});
+
+describe('taskPlannerReset', () => {
+    test('deletes the session key', async () => {
+        await seedSession();
+        const res = await planner.taskPlannerReset();
+        expect(res).toEqual({ ok: true, state: null });
+        expect(await readStored()).toBeUndefined();
+    });
+});
+
+describe('taskPlannerGetState', () => {
+    test('returns null with no session', async () => {
+        expect(await planner.taskPlannerGetState()).toEqual({ ok: true, state: null });
+    });
+
+    test('returns a live session untouched', async () => {
+        const session = await seedSession();
+        const res = await planner.taskPlannerGetState();
+        expect(res.state).toEqual(session);
+    });
+
+    test("heals a stale 'thinking' (owning SW died) into a friendly error", async () => {
+        await seedSession({ status: 'thinking', updatedAt: Date.now() - 5000 });
+        const res = await planner.taskPlannerGetState();
+        expect(res.ok).toBe(true);
+        expect(res.state.status).toBe('error');
+        expect(res.state.error).toBe(planner.THINKING_INTERRUPTED_ERROR);
+        expect((await readStored()).status).toBe('error');
+    });
+
+    test('does NOT heal a fresh thinking state while the send is in flight', async () => {
+        let resolveTurn;
+        mockAI(() => new Promise((resolve) => { resolveTurn = resolve; }));
+        await seedSession();
+        const sendPromise = planner.taskPlannerSend({ text: 'plan' });
+        await tick();
+        expect((await readStored()).status).toBe('thinking');
+        const mid = await planner.taskPlannerGetState();
+        expect(mid.state.status).toBe('thinking'); // in flight + fresh → left alone
+        resolveTurn(turnJSON());
+        const res = await sendPromise;
+        expect(res.ok).toBe(true);
+        expect((await readStored()).status).toBe('ready');
+    });
+
+    test('heals even an in-flight thinking state once it exceeds the staleness window', async () => {
+        let resolveTurn;
+        mockAI(() => new Promise((resolve) => { resolveTurn = resolve; }));
+        await seedSession();
+        const sendPromise = planner.taskPlannerSend({ text: 'plan' });
+        await tick();
+        // Simulate a hung upstream: backdate the thinking write past the window.
+        const stored = await readStored();
+        await browser.storage.local.set({ [KEY]: { ...stored, updatedAt: Date.now() - planner.STALE_THINKING_MS - 1000 } });
+        const res = await planner.taskPlannerGetState();
+        expect(res.state.status).toBe('error');
+        resolveTurn(turnJSON());
+        await sendPromise;
+    });
+
+    test("start also heals a stale 'thinking' before deciding to reuse", async () => {
+        await seedSession({ status: 'thinking', updatedAt: Date.now() - 5000 });
+        const res = await planner.taskPlannerStart({});
+        expect(res.state.sessionId).toBe('session-1'); // reused (fresh enough)…
+        expect(res.state.status).toBe('error');        // …but healed, not stuck thinking
+    });
+});

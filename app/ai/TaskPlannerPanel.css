@@ -1,0 +1,632 @@
+/* Task Planner panel — chat on the left, live collected-tabs panel on the
+ * right. Lives inside .ai-tool-panel--planner (AIToolsModal.css), which
+ * provides the flex context. The min-height:0 chain from the panel down to
+ * .tp-messages is mandatory — without it the popup's flexbox lets the
+ * transcript blow past the modal instead of scrolling. */
+
+/* static/index.css applies a global 200ms background-color transition to every
+ * element; in a live chat that fade makes bubbles/pills/tabs feel laggy. Opt
+ * the whole subtree out, then re-declare only the transitions we want. */
+.tp-root,
+.tp-root * {
+    transition: none;
+}
+
+.tp-root {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.tp-layout {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    /* The modal only has a max-height, so the layout needs a concrete basis
+     * for the inner scroll regions to resolve against. */
+    height: min(430px, 62vh);
+}
+
+.ai-tools-modal--fullpage .tp-layout {
+    height: min(560px, 70vh);
+}
+
+/* ── Chat column ─────────────────────────────────────────────────────────── */
+
+.tp-chat {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tp-messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 6px 4px 2px;
+    /* Both scrollbar syntaxes: Gecko honors the standard properties, Blink
+     * (Chrome 89 target) needs the -webkit pseudo-elements. */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(67, 97, 238, 0.35) transparent;
+}
+
+.tp-messages::-webkit-scrollbar,
+.tp-groups::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tp-messages::-webkit-scrollbar-track,
+.tp-groups::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.tp-messages::-webkit-scrollbar-thumb,
+.tp-groups::-webkit-scrollbar-thumb {
+    background: rgba(67, 97, 238, 0.35);
+    border-radius: 3px;
+}
+
+/* ── Message bubbles ─────────────────────────────────────────────────────── */
+
+.tp-msg {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: 100%;
+}
+
+.tp-msg--user {
+    justify-content: flex-end;
+}
+
+/* Tabox-logo avatar on assistant bubbles. */
+.tp-avatar {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, var(--gradient-blue), var(--gradient-purple), var(--gradient-orange), #ff6b9d);
+    user-select: none;
+}
+
+.tp-bubble {
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text-color);
+    max-width: calc(100% - 44px);
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+.tp-msg--assistant .tp-bubble {
+    background: rgba(67, 97, 238, 0.06);
+    border: 1px solid rgba(67, 97, 238, 0.14);
+    border-bottom-left-radius: 4px;
+}
+
+.tp-msg--user .tp-bubble {
+    background: rgba(67, 97, 238, 0.10);
+    border-bottom-right-radius: 4px;
+}
+
+[data-theme="dark"] .tp-msg--assistant .tp-bubble {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(126, 147, 255, 0.22);
+}
+
+[data-theme="dark"] .tp-msg--user .tp-bubble {
+    background: rgba(126, 147, 255, 0.16);
+}
+
+.tp-bubble--error {
+    color: #dc2626;
+    border-color: rgba(220, 38, 38, 0.35);
+    background: rgba(220, 38, 38, 0.06);
+}
+
+[data-theme="dark"] .tp-bubble--error {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.35);
+    background: rgba(248, 113, 113, 0.08);
+}
+
+/* Initial-load placeholder bubble. */
+.tp-bubble--skeleton {
+    width: 60%;
+    height: 34px;
+    background: rgba(67, 97, 238, 0.08);
+    border: 1px solid rgba(67, 97, 238, 0.1);
+}
+
+/* Message entrance: opacity + translateY, single iteration, static end. */
+@keyframes tp-msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-msg {
+        animation: tp-msg-in 0.3s ease-out both;
+    }
+}
+
+/* ── Thinking bubble ─────────────────────────────────────────────────────── */
+
+.tp-thinking {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Text shimmer via background-clip:text. Firefox mispaints multi-layer
+ * background-clip:text (see OnboardingGuide.css), so the gradient lives on
+ * this dedicated element with a single background layer. */
+.tp-thinking-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: transparent;
+    background: linear-gradient(90deg, #4361ee 0%, #22d3ee 30%, #8b5cf6 55%, #4361ee 80%) 0 0 / 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+}
+
+.tp-thinking-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.tp-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #4361ee;
+    opacity: 0.7;
+}
+
+[data-theme="dark"] .tp-dot {
+    background: #7e93ff;
+}
+
+@keyframes tp-shimmer-sweep {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Same pulse as Header.css's pulse-dot, staggered per dot. */
+@keyframes tp-pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.8); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-thinking-text {
+        animation: tp-shimmer-sweep 2.2s linear infinite;
+    }
+    .tp-dot {
+        animation: tp-pulse-dot 1.4s ease-in-out infinite;
+    }
+    .tp-dot:nth-child(2) { animation-delay: 0.2s; }
+    .tp-dot:nth-child(3) { animation-delay: 0.4s; }
+}
+
+/* Static end-state under reduced motion: plain readable text, solid dots. */
+@media (prefers-reduced-motion: reduce) {
+    .tp-thinking-text {
+        color: var(--text-color);
+        background: none;
+    }
+}
+
+html.performance-mode .tp-thinking-text,
+html.performance-mode .tp-dot,
+html.performance-mode .tp-msg,
+html.performance-mode .tp-pill,
+html.performance-mode .tp-pill--skeleton,
+html.performance-mode .tp-group,
+html.performance-mode .tp-tab--new {
+    animation: none !important;
+}
+
+html.performance-mode .tp-thinking-text {
+    color: var(--text-color);
+    background: none;
+}
+
+/* ── Suggestion pills ────────────────────────────────────────────────────── */
+
+.tp-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.tp-pill {
+    border: none;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-color);
+    background: rgba(67, 97, 238, 0.1);
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tp-pill:hover:not(:disabled) {
+    background: rgba(67, 97, 238, 0.2);
+    box-shadow: 0 0 8px rgba(67, 97, 238, 0.25);
+}
+
+.tp-pill:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 2px;
+}
+
+.tp-pill:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* Loading skeleton pills while the AI generates suggestions. */
+.tp-pill--skeleton {
+    display: inline-block;
+    width: 108px;
+    height: 27px;
+    padding: 0;
+    background: rgba(67, 97, 238, 0.08);
+    cursor: default;
+}
+
+@keyframes tp-skeleton-pulse {
+    0%   { opacity: 0.55; }
+    100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-pill {
+        animation: tp-msg-in 0.3s ease-out both;
+    }
+    .tp-pill--skeleton {
+        animation: tp-skeleton-pulse 1.5s ease-in-out infinite alternate;
+    }
+}
+
+/* ── Composer ────────────────────────────────────────────────────────────── */
+
+.tp-composer {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.tp-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    resize: none;
+    border: 1px solid rgba(67, 97, 238, 0.25);
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 18px;
+    color: var(--text-color);
+    background: var(--bg-color);
+    max-height: 88px; /* ~4 lines */
+    overflow-y: auto;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tp-input:focus {
+    outline: none;
+    border-color: #4361ee;
+    box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.15);
+}
+
+.tp-input:disabled {
+    opacity: 0.6;
+}
+
+[data-theme="dark"] .tp-input {
+    border-color: rgba(126, 147, 255, 0.3);
+}
+
+[data-theme="dark"] .tp-input:focus {
+    border-color: #7e93ff;
+    box-shadow: 0 0 0 2px rgba(126, 147, 255, 0.18);
+}
+
+.tp-send-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    background: linear-gradient(135deg, #4361ee 0%, #2563eb 100%);
+    cursor: pointer;
+    transition: filter 0.2s ease, opacity 0.2s ease;
+}
+
+.tp-send-btn:hover:not(:disabled) {
+    filter: brightness(1.15);
+}
+
+.tp-send-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.tp-send-btn:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 2px;
+}
+
+/* ── Collected-tabs panel ────────────────────────────────────────────────── */
+
+.tp-tabs-panel {
+    flex: 0 0 210px;
+    width: 210px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-left: 1px solid rgba(128, 128, 128, 0.18);
+    padding-left: 12px;
+}
+
+.ai-tools-modal--fullpage .tp-tabs-panel {
+    flex: 0 0 300px;
+    width: 300px;
+}
+
+.tp-tabs-header {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tp-collection-name {
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 5px 8px;
+    margin: 0 -8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-color);
+    background: transparent;
+    min-width: 0;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.tp-collection-name:hover {
+    background: rgba(67, 97, 238, 0.06);
+}
+
+.tp-collection-name:focus {
+    outline: none;
+    border-color: rgba(67, 97, 238, 0.5);
+    background: var(--bg-color);
+}
+
+.tp-tab-count {
+    font-size: 11px;
+    opacity: 0.65;
+    color: var(--text-color);
+}
+
+.tp-groups {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(67, 97, 238, 0.35) transparent;
+}
+
+.tp-groups-empty {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    opacity: 0.6;
+    color: var(--text-color);
+}
+
+.tp-group {
+    flex: 0 0 auto;
+    border-left: 4px solid transparent; /* color set inline per group */
+    border-radius: 6px;
+    padding: 6px 4px 6px 8px;
+    background: rgba(128, 128, 128, 0.06);
+}
+
+[data-theme="dark"] .tp-group {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* Groups stagger in (delay set inline per index). */
+@media (prefers-reduced-motion: no-preference) {
+    .tp-group {
+        animation: tp-msg-in 0.3s ease-out both;
+    }
+}
+
+.tp-group-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-color);
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tp-group-tabs {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.tp-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    max-height: 28px;
+    overflow: hidden;
+    transition: max-height 0.2s ease, opacity 0.2s ease, padding 0.2s ease;
+}
+
+/* New tabs flash in with a brief AI-accent highlight (single iteration). */
+@keyframes tp-tab-flash {
+    0%   { opacity: 0; transform: translateY(4px); background: rgba(67, 97, 238, 0.22); border-radius: 6px; }
+    40%  { opacity: 1; transform: translateY(0); background: rgba(67, 97, 238, 0.22); border-radius: 6px; }
+    100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-tab--new {
+        animation: tp-tab-flash 0.8s ease-out both;
+    }
+}
+
+/* Removed tabs collapse while the SW write is in flight. */
+.tp-tab--removing {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
+}
+
+.tp-tab-favicon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+}
+
+.tp-tab-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tp-tab-remove {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
+    opacity: 0.55;
+    cursor: pointer;
+    line-height: 0;
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.tp-tab-remove:hover {
+    opacity: 1;
+    background: rgba(220, 38, 38, 0.12);
+    color: #dc2626;
+}
+
+[data-theme="dark"] .tp-tab-remove:hover {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.14);
+}
+
+.tp-tab-remove:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 1px;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────── */
+
+.tp-tabs-footer {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(128, 128, 128, 0.15);
+}
+
+.tp-save-btn {
+    width: 100%;
+}
+
+.tp-new-plan-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-color);
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.65;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.tp-new-plan-btn:hover:not(:disabled) {
+    opacity: 1;
+    background: rgba(128, 128, 128, 0.1);
+}
+
+.tp-new-plan-btn:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 2px;
+}
+
+.tp-new-plan-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.tp-error {
+    color: #dc2626;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+[data-theme="dark"] .tp-error {
+    color: #f87171;
+}

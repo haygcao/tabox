@@ -24,7 +24,7 @@ import RenameToolIcon from './RenameToolIcon';
 import AutoArrangeToolIcon from './AutoArrangeToolIcon';
 import DuplicateSweepToolIcon from './DuplicateSweepToolIcon';
 import SplitCollectionToolIcon from './SplitCollectionToolIcon';
-import SmartGroupingToolIcon from './SmartGroupingToolIcon';
+import TaskPlannerPanel from './ai/TaskPlannerPanel';
 import SmartOrganizeFoldAnimation from './SmartOrganizeFoldAnimation';
 import { showUndoToast, showSuccessToast } from './toastHelpers';
 import { UNDO_TIME } from './constants';
@@ -214,13 +214,16 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
         setInitialTool(null);
     }, [isOpen, initialTool, setInitialTool]);
 
-    // SplitCollectionPanel manages its own running/review/done UI from
-    // aiTaskState, so the modal chrome must never enter the locked 'running'
-    // state for it — otherwise Back/Close (and the folder AI-suggest button)
-    // stay disabled on the review screen. The reattach effect can set it to
-    // 'running' for the in-flight scan, so force it back to 'idle' here.
+    // Tools flagged `selfManagedStatus` in the AI_TOOLS registry manage their
+    // own running/review/done UI (Split Collection from aiTaskState; the Task
+    // Planner owns its whole long-lived chat session), so the modal chrome must
+    // never enter the locked 'running' state for them — otherwise Back/Close/ESC
+    // (and the folder AI-suggest button) stay disabled on the review screen.
+    // The reattach effect can set it to 'running' for the in-flight scan, so
+    // force it back to 'idle' here.
     useEffect(() => {
-        if (activeToolId === 'split-collection' && panelStatus !== 'idle') {
+        const activeToolDef = AI_TOOLS.find((tool) => tool.id === activeToolId);
+        if (activeToolDef?.selfManagedStatus && panelStatus !== 'idle') {
             setPanelStatus('idle');
         }
     }, [activeToolId, panelStatus, aiTaskState]);
@@ -913,7 +916,7 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
             isOpen={isOpen}
             onRequestClose={busy ? undefined : close}
             contentLabel="Tabox AI Tools"
-            className={`modal-content ai-tools-modal${viewContext === 'fullpage' ? ' ai-tools-modal--fullpage' : ''}`}
+            className={`modal-content ai-tools-modal${viewContext === 'fullpage' ? ' ai-tools-modal--fullpage' : ''}${activeToolId === 'task-planner' ? ' ai-tools-modal--planner' : ''}`}
             overlayClassName="modal-overlay ai-tools-modal-overlay"
             ariaHideApp={false}
             shouldCloseOnOverlayClick={!busy}
@@ -946,11 +949,12 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                     <div className="ai-tools-list">
                         {AI_TOOLS.filter((t) => t.featured).map((tool) => {
                             const ToolIcon = tool.icon;
+                            const HeroIcon = tool.heroIcon;
                             return (
-                                <button key={tool.id} type="button" className="ai-hero-card" onClick={() => setActiveToolId(tool.id)}>
+                                <button key={tool.id} type="button" className="ai-hero-card" data-tool-id={tool.id} onClick={() => setActiveToolId(tool.id)}>
                                     {isToolLocked(tool) && <MdLock className="ai-tool-lock" data-testid="ai-tool-lock" />}
-                                    {tool.id === 'smart-organize'
-                                        ? <SmartGroupingToolIcon className="ai-hero-icon" />
+                                    {HeroIcon
+                                        ? <HeroIcon className="ai-hero-icon" />
                                         : <ToolIcon size={40} className="ai-hero-icon" />}
                                     <span className="ai-hero-text">
                                         <span className="ai-hero-title">{tool.title}</span>
@@ -1460,6 +1464,12 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                                 <DuplicateSweepPanel sweep={duplicateSweepWithRefresh} namesByUid={dupNamesByUid} />
                             </>
                         )}
+                    </div>
+                )}
+
+                {activeToolId === 'task-planner' && (
+                    <div className="ai-tool-panel ai-tool-panel--planner">
+                        <TaskPlannerPanel updateRemoteData={updateRemoteData} onDataUpdate={onDataUpdate} />
                     </div>
                 )}
 
