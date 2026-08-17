@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSetAtom } from 'jotai';
 import { MdClose, MdFolderOpen, MdRefresh, MdSend } from 'react-icons/md';
 import { BsStars } from 'react-icons/bs';
@@ -52,6 +52,40 @@ const handleFaviconError = (e) => {
     }
 };
 
+// AI change choreography timings — must cover the CSS animation durations plus
+// the per-row stagger (6 * 45ms) so nothing is cut off mid-animation.
+const SCROLL_SETTLE_MS = 420;   // smooth-scroll settle before animations start
+const VANISH_TOTAL_MS = 850;    // dematerialize (0.55s) + max stagger, then purge
+
+// The materialize/dematerialize choreography is skipped entirely (rows just
+// appear/disappear, with an instant scroll) when the user opted out of motion.
+const motionDisabled = () => (
+    (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+    || document.documentElement.classList.contains('performance-mode')
+);
+
+// Merge AI-removed tabs back into the next groups at their old positions (and
+// keep the shell of a fully-removed group) so they can dematerialize in place
+// before being purged.
+const mergeRemovedBack = (nextGroups, prevGroups, removedUids) => {
+    const merged = nextGroups.map((g) => ({ ...g, tabs: [...(g.tabs || [])] }));
+    const byUid = new Map(merged.map((g) => [g.uid, g]));
+    prevGroups.forEach((pg, pgIndex) => {
+        const removedTabs = (pg.tabs || []).filter((t) => removedUids.has(t.uid));
+        if (!removedTabs.length) return;
+        let target = byUid.get(pg.uid);
+        if (!target) {
+            target = { ...pg, tabs: [] };
+            merged.splice(Math.min(pgIndex, merged.length), 0, target);
+            byUid.set(target.uid, target);
+        }
+        (pg.tabs || []).forEach((t, i) => {
+            if (removedUids.has(t.uid)) target.tabs.splice(Math.min(i, target.tabs.length), 0, t);
+        });
+    });
+    return merged;
+};
+
 // Chat-style Task Planner panel (AI Tools modal, popup + full-page).
 // The popup only initiates work and renders session state — every mutation
 // (start/send/removeTab/reset) is a runtime message handled in the service
@@ -85,15 +119,30 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     // Guards the slow initial read against clobbering a fresher storage change
     // (same pattern as useSmartOrganizeUndo).
     const loadedRef = useRef(false);
-    // Tab uids seen on the previous groups render — a tab not in here flashes
-    // in as new. null = no groups rendered yet (initial load doesn't flash).
-    const prevTabUidsRef = useRef(null);
     const messagesRef = useRef(null);
     const textareaRef = useRef(null);
     const flashTimerRef = useRef(null);
 
+    // ── AI change choreography ──────────────────────────────────────────────
+    // When an AI turn adds or removes tabs, the sidebar first scrolls to the
+    // first changed row, THEN the rows materialize/dematerialize in place.
+    // displayGroups is what actually renders: during a removal it briefly
+    // keeps the removed tabs (merged back at their old spots) so they can
+    // vanish visibly before being purged.
+    const [displayGroups, setDisplayGroups] = useState([]);
+    // null = idle. { stage, added:Set, removed:Set, instant:bool } otherwise.
+    // 'hold': changed rows wait (added ones hidden) while the sidebar scrolls;
+    // 'run': the materialize/dematerialize animations play.
+    const [tabAnim, setTabAnim] = useState(null);
+    const prevGroupsRef = useRef(null);     // last adopted session groups
+    const prevSessionIdRef = useRef(null);  // diff only within the same session
+    const removingTabsRef = useRef([]);     // mirror for the groups-diff effect
+    const groupsScrollRef = useRef(null);   // the .tp-groups scroll container
+
     const messages = session?.messages || [];
-    const groups = session?.groups || [];
+    // Stable reference between renders — the diff effect keys off it.
+    const groups = useMemo(() => session?.groups || [], [session]);
+    const sessionId = session?.sessionId || null;
     const isThinking = session?.status === 'thinking';
     // Set once the session is linked to a saved collection (after a save, or
     // after loading one via the picker) — Save becomes an in-place Update.
@@ -165,19 +214,117 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         if (el) el.scrollTop = el.scrollHeight;
     }, [messages.length, isThinking]);
 
-    // Reconcile the removed-tab collapse list + new-tab flash tracking whenever
-    // the session's groups change.
+    // Mirror removingTabs for the diff effect below (user-initiated removals
+    // must not run the AI dematerialize choreography — they collapse inline).
+    useEffect(() => { removingTabsRef.current = removingTabs; }, [removingTabs]);
+
+    // Diff each adopted session groups set against the previous one, reconcile
+    // the user-removal collapse list, and kick off the AI change choreography.
     useEffect(() => {
+        const prevGroups = prevGroupsRef.current;
+        const sameSession = sessionId !== null && sessionId === prevSessionIdRef.current;
+        prevGroupsRef.current = groups;
+        prevSessionIdRef.current = sessionId;
+
         const uids = new Set();
         for (const g of groups) for (const t of (g.tabs || [])) uids.add(t.uid);
-        prevTabUidsRef.current = uids;
         setRemovingTabs((prev) => (prev.length ? prev.filter((uid) => uids.has(uid)) : prev));
-    }, [groups]);
 
-    // Computed at render time against the PREVIOUS render's tab set (the effect
-    // above updates the ref after paint), so newly-arrived tabs flash in once.
-    const prevUids = prevTabUidsRef.current;
-    const isNewTab = (uid) => prevUids !== null && !prevUids.has(uid);
+        // First adoption (mount/reattach) or a brand-new session: render as-is.
+        if (!sameSession || prevGroups === null) {
+            setDisplayGroups(groups);
+            setTabAnim(null);
+            return;
+        }
+
+        const prevUids = new Set();
+        for (const g of prevGroups) for (const t of (g.tabs || [])) prevUids.add(t.uid);
+        const added = new Set();
+        for (const uid of uids) if (!prevUids.has(uid)) added.add(uid);
+        const userRemoved = new Set(removingTabsRef.current);
+        const removed = new Set();
+        for (const uid of prevUids) if (!uids.has(uid) && !userRemoved.has(uid)) removed.add(uid);
+
+        if (!added.size && !removed.size) {
+            setDisplayGroups(groups);
+            return;
+        }
+        if (motionDisabled()) {
+            // No choreography — render the new set and jump-scroll to it.
+            setDisplayGroups(groups);
+            setTabAnim({ stage: 'hold', added, removed, instant: true });
+            return;
+        }
+        setDisplayGroups(removed.size ? mergeRemovedBack(groups, prevGroups, removed) : groups);
+        setTabAnim({ stage: 'hold', added, removed, instant: false });
+    }, [groups, sessionId]);
+
+    // 'hold' stage: scroll the sidebar to the first changed row, then release
+    // the animations. Runs before paint so held (hidden) rows never flicker.
+    useLayoutEffect(() => {
+        if (!tabAnim || tabAnim.stage !== 'hold') return undefined;
+        const container = groupsScrollRef.current;
+        let wait = 0;
+        if (container && container.scrollHeight > container.clientHeight + 4) {
+            let target = null;
+            for (const el of container.querySelectorAll('[data-tab-uid]')) {
+                const uid = el.getAttribute('data-tab-uid');
+                if (tabAnim.added.has(uid) || tabAnim.removed.has(uid)) { target = el; break; }
+            }
+            if (target) {
+                const cRect = container.getBoundingClientRect();
+                const tRect = target.getBoundingClientRect();
+                if (tRect.top < cRect.top + 4 || tRect.bottom > cRect.bottom - 4) {
+                    const top = container.scrollTop + (tRect.top - cRect.top) - (cRect.height - tRect.height) / 2;
+                    const dest = Math.max(0, Math.min(top, container.scrollHeight - container.clientHeight));
+                    if (typeof container.scrollTo === 'function') {
+                        container.scrollTo({ top: dest, behavior: tabAnim.instant ? 'auto' : 'smooth' });
+                    } else {
+                        container.scrollTop = dest;
+                    }
+                    if (!tabAnim.instant) wait = SCROLL_SETTLE_MS;
+                }
+            }
+        }
+        if (tabAnim.instant) {
+            setTabAnim(null);
+            return undefined;
+        }
+        const release = () => setTabAnim((a) => (a && a.stage === 'hold' ? { ...a, stage: 'run' } : a));
+        if (wait === 0) {
+            release();
+            return undefined;
+        }
+        const t = setTimeout(release, wait);
+        return () => clearTimeout(t);
+    }, [tabAnim]);
+
+    // Purge dematerialized rows from the display once their animation is done.
+    useEffect(() => {
+        if (!tabAnim || tabAnim.stage !== 'run' || tabAnim.removed.size === 0) return undefined;
+        const t = setTimeout(() => {
+            setDisplayGroups(prevGroupsRef.current || []);
+            // Keep `added` so still-staggering materialize rows finish cleanly.
+            setTabAnim((a) => (a ? { ...a, removed: new Set() } : a));
+        }, VANISH_TOTAL_MS);
+        return () => clearTimeout(t);
+    }, [tabAnim]);
+
+    // Stagger order for changed rows, in display order.
+    const changeOrder = useMemo(() => {
+        if (!tabAnim || tabAnim.instant) return null;
+        const map = new Map();
+        let i = 0;
+        for (const g of displayGroups) {
+            for (const t of (g.tabs || [])) {
+                if (tabAnim.added.has(t.uid) || tabAnim.removed.has(t.uid)) map.set(t.uid, i++);
+            }
+        }
+        return map;
+    }, [displayGroups, tabAnim]);
+
+    // Group shells kept alive only to host dematerializing tabs fade with them.
+    const sessionGroupUids = useMemo(() => new Set(groups.map((g) => g.uid)), [groups]);
 
     // ── Actions (all mutations run in the service worker) ───────────────────
     const sendText = useCallback(async (text) => {
@@ -240,7 +387,10 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         setRemovingTabs([]);
         setPickerOpen(false);
         setPickerLoadingUid(null);
-        prevTabUidsRef.current = null;
+        prevGroupsRef.current = null;
+        prevSessionIdRef.current = null;
+        setDisplayGroups([]);
+        setTabAnim(null);
     }, []);
 
     const startFresh = useCallback(async () => {
@@ -601,8 +751,8 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                             </div>
                         </div>
                     ) : (
-                    <div className="tp-groups">
-                        {groups.length === 0 && (
+                    <div className="tp-groups" ref={groupsScrollRef}>
+                        {displayGroups.length === 0 && (
                             <>
                                 <p className="tp-groups-empty">Websites the AI gathers for your plan will appear here.</p>
                                 {!linkedUid && (
@@ -617,18 +767,38 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                                 )}
                             </>
                         )}
-                        {groups.map((g, gi) => (
+                        {displayGroups.map((g, gi) => {
+                            // Shell kept alive only for its dematerializing tabs.
+                            const groupVanishing = tabAnim && !tabAnim.instant
+                                && tabAnim.stage === 'run' && !sessionGroupUids.has(g.uid);
+                            return (
                             <div
                                 key={g.uid}
-                                className="tp-group"
+                                className={`tp-group${groupVanishing ? ' tp-group--vanishing' : ''}`}
                                 style={{ borderLeftColor: getColorCode(g.color), animationDelay: `${Math.min(gi, 6) * 0.07}s` }}
                             >
                                 <div className="tp-group-title">{g.title}</div>
                                 <ul className="tp-group-tabs">
-                                    {(g.tabs || []).map((t) => (
+                                    {(g.tabs || []).map((t) => {
+                                        // AI choreography classes: hidden hold →
+                                        // materialize; in-place dematerialize.
+                                        let animClass = '';
+                                        if (tabAnim && !tabAnim.instant) {
+                                            if (tabAnim.added.has(t.uid)) {
+                                                animClass = tabAnim.stage === 'hold' ? ' tp-tab--holding' : ' tp-tab--materializing';
+                                            } else if (tabAnim.removed.has(t.uid) && tabAnim.stage === 'run') {
+                                                animClass = ' tp-tab--vanishing';
+                                            }
+                                        }
+                                        const animDelay = animClass && tabAnim.stage === 'run'
+                                            ? `${Math.min((changeOrder && changeOrder.get(t.uid)) || 0, 6) * 45}ms`
+                                            : undefined;
+                                        return (
                                         <li
                                             key={t.uid}
-                                            className={`tp-tab${isNewTab(t.uid) ? ' tp-tab--new' : ''}${removingTabs.includes(t.uid) ? ' tp-tab--removing' : ''}`}
+                                            data-tab-uid={t.uid}
+                                            className={`tp-tab${animClass}${removingTabs.includes(t.uid) ? ' tp-tab--removing' : ''}`}
+                                            style={animDelay ? { animationDelay: animDelay } : undefined}
                                         >
                                             <img
                                                 className="tp-tab-favicon"
@@ -653,10 +823,12 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                                                 <MdClose size={14} />
                                             </button>
                                         </li>
-                                    ))}
+                                        );
+                                    })}
                                 </ul>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                     )}
                     <div className="tp-tabs-footer">
