@@ -277,6 +277,10 @@ async function taskPlannerSend({ text } = {}) {
             const raw = await client().requestChatCompletion(messages, {
                 temperature: 0.7,
                 responseConstraint: core.PLANNER_TURN_SCHEMA,
+                // Chat turns run the thinking tier: a reasoning pass decomposes
+                // the request into facets (lodging, tickets, flights, …) before
+                // picking sites. Pills stay on the fast default tier.
+                modelTier: 'thinking',
             });
             const turn = core.normalizeTurn(core.parseJSONContent(raw), thinking.groups || []);
             const assistantMessage = { id: core.mintUid(), role: 'assistant', content: turn.reply, ts: Date.now() };

@@ -121,11 +121,39 @@ describe('POST /ai/complete', () => {
       { messages: [{ role: 'user', content: 'x' }], temperature: 9 },
       { messages: [{ role: 'user', content: 'x' }], top_k: 0 },
       { messages: [{ role: 'user', content: 'x' }], response_format: { type: 'text' } },
+      { messages: [{ role: 'user', content: 'x' }], model_tier: 'gpt-5' },
+      { messages: [{ role: 'user', content: 'x' }], model_tier: 'constructor' },
     ]) {
       const res = await worker.fetch(req('t-user', bad), env(PRO_KV()));
       expect(res.status).toBe(400);
     }
     expect(calls.openrouter).toHaveLength(0);
+  });
+
+  // The client may name a TIER; the server maps it to a pinned model and
+  // reasoning config. The raw model_tier field never reaches OpenRouter.
+  it('model_tier thinking maps to the pinned reasoning model with a larger output budget', async () => {
+    const calls = mockFetch({ completion: '{"name":"Plan"}' });
+    const res = await worker.fetch(req('t-user', { ...VALID_BODY, model_tier: 'thinking' }), env(PRO_KV()));
+    expect(res.status).toBe(200);
+    const upstream = JSON.parse(calls.openrouter[0].opts.body);
+    expect(upstream.model).toBe('google/gemini-3.7-flash');
+    expect(upstream.max_tokens).toBe(16384);
+    expect(upstream.reasoning).toEqual({ effort: 'medium' });
+    expect(upstream.model_tier).toBeUndefined();
+  });
+
+  it('model_tier default (and absent) keeps today\'s pinned model with no reasoning', async () => {
+    const calls = mockFetch({ completion: '{}' });
+    await worker.fetch(req('t-user', { ...VALID_BODY, model_tier: 'default' }), env(PRO_KV()));
+    await worker.fetch(req('t-user', VALID_BODY), env(PRO_KV()));
+    for (const call of calls.openrouter) {
+      const upstream = JSON.parse(call.opts.body);
+      expect(upstream.model).toBe('google/gemini-3.5-flash-lite');
+      expect(upstream.max_tokens).toBe(8192);
+      expect(upstream.reasoning).toBeUndefined();
+      expect(upstream.model_tier).toBeUndefined();
+    }
   });
 
   // Task Planner replays chat history, so assistant messages and longer

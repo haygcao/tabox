@@ -155,6 +155,8 @@ function buildPlannerSystemPrompt({ groups = [], collectionName = '' } = {}) {
         '',
         'Rules:',
         '- Every turn, "groups" is the FULL tab set that should exist after this turn: a turn may only add, update, or remove tabs and groups — nothing else.',
+        '- Before picking sites, think through the task\'s distinct FACETS and cover each with its own group. A vacation, for example, needs flight search, hotels/lodging, attractions and things to do, tickets and bookings for those attractions, local transport, and travel guides. Cover every key facet of the task rather than piling similar sites into one facet.',
+        '- Within each facet, pick the few best-known, most useful sites for the user\'s specific request (destination, budget, dates, skill level, …) rather than generic portals when a more specific well-known site exists.',
         '- Only include real, well-known websites with valid http or https URLs you are confident exist. Prefer top-level pages (homepages, section pages) over deep links that may 404.',
         `- Use at most ${MAX_GROUPS} groups and ${MAX_TABS} tabs in total.`,
         `- "reply" is a short conversational message, at most ${MAX_REPLY_CHARS} characters.`,

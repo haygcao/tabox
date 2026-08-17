@@ -304,6 +304,15 @@ describe('taskPlannerSend', () => {
         expect(messages[messages.length - 1]).toEqual({ role: 'user', content: 'plan my reading' });
         expect(opts.temperature).toBe(0.7);
         expect(opts.responseConstraint).toBe(core.PLANNER_TURN_SCHEMA);
+        // Chat turns run the thinking tier for facet decomposition.
+        expect(opts.modelTier).toBe('thinking');
+    });
+
+    test('pill generation stays on the fast default tier', async () => {
+        const ai = mockAI(async () => '{"pills":["A pill","B pill","C pill"]}');
+        await planner.taskPlannerStart({});
+        const [, opts] = ai.mock.calls[0];
+        expect(opts.modelTier).toBeUndefined();
     });
 
     test('windows the history to HISTORY_WINDOW display messages', async () => {

@@ -25,6 +25,14 @@ describe('buildPlannerSystemPrompt', () => {
         expect(prompt).toContain('ONLY if the request is clearly unrelated');
     });
 
+    test('instructs facet decomposition with the vacation example', () => {
+        const prompt = core.buildPlannerSystemPrompt({ groups: [], collectionName: '' });
+        expect(prompt).toContain('FACETS');
+        expect(prompt).toContain('flight search');
+        expect(prompt).toContain('tickets and bookings');
+        expect(prompt).toContain('Cover every key facet');
+    });
+
     test('carries the prompt-injection security rules and fences the tab set', () => {
         const prompt = core.buildPlannerSystemPrompt({
             groups: [{ uid: 'g1', title: 'Reading', color: 'blue', tabs: [{ uid: 't1', title: 'MDN', url: 'https://developer.mozilla.org' }] }],

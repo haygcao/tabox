@@ -83,16 +83,16 @@ const MAX_CHAT_MESSAGES = 32;
 // Multi-turn chat completion: accepts a FULL messages array (system/user/
 // assistant roles — the Worker accepts assistant since the Task Planner
 // change). One-shot prompts should keep using sessions/requestCompletion.
-async function requestChatCompletion(messages, { temperature, topK, responseConstraint, signal } = {}) {
+async function requestChatCompletion(messages, { temperature, topK, responseConstraint, signal, modelTier } = {}) {
     if (!Array.isArray(messages) || messages.length === 0) throw new Error('Tabox AI: no messages to send');
     if (messages.length > MAX_CHAT_MESSAGES) throw new Error(`Tabox AI: too many messages (max ${MAX_CHAT_MESSAGES})`);
     // Project to the exact wire shape so stray fields (ids, timestamps) from
     // stored transcripts never reach the Worker's strict validator.
     const wireMessages = messages.map((m) => ({ role: m.role, content: m.content }));
-    return performCompletionRequest(wireMessages, { temperature, topK, responseConstraint, signal });
+    return performCompletionRequest(wireMessages, { temperature, topK, responseConstraint, signal, modelTier });
 }
 
-async function performCompletionRequest(messages, { temperature, topK, responseConstraint, signal } = {}) {
+async function performCompletionRequest(messages, { temperature, topK, responseConstraint, signal, modelTier } = {}) {
     const token = await aiClientBgUtils.getAuthTokenForAI();
     if (!token) throw new Error('Tabox AI: sign in to Tabox to use AI features');
     // One internal controller drives the fetch; the caller's signal and the
@@ -109,6 +109,9 @@ async function performCompletionRequest(messages, { temperature, topK, responseC
     }
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, AI_REQUEST_TIMEOUT_MS);
     const body = { messages };
+    // Tier NAME only — the Worker maps it to a pinned model ('thinking' runs a
+    // reasoning pass; used by Task Planner chat turns).
+    if (modelTier !== undefined) body.model_tier = modelTier;
     if (temperature !== undefined) body.temperature = temperature;
     if (topK !== undefined) body.top_k = topK;
     if (responseConstraint) {
