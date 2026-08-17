@@ -24,6 +24,7 @@ import {
 } from './shareLinks.js';
 import { JOIN_PAGE_HTML } from './joinPage.js';
 import { validateAIRequest, completeAI } from './aiProxy.js';
+import { validateUrlsRequest, checkUrls } from './urlValidator.js';
 import { handlePushSubscribe, handlePushUnsubscribe } from './pushRoutes.js';
 import { notifyEmails, notifyFolderMembers } from './pushNotify.js';
 import { handleAuthCallback } from './authCallback.js';
@@ -243,6 +244,35 @@ async function handleAIComplete(request, env) {
   const result = await completeAI(env, validated);
   if (!result.ok) return json({ error: result.error }, result.status);
   return json({ content: result.content });
+}
+
+// URL reachability validation for AI-suggested tabs — Pro users only, with
+// its OWN burst bucket (30/min, no daily bucket: each call probes at most 20
+// third-party URLs, so the burst cap alone bounds the fan-out). Same
+// auth/entitlement/body-cap ladder as handleAIComplete; verdict logic lives
+// in urlValidator.js.
+async function handleValidateUrls(request, env) {
+  const identity = await authenticate(request, env);
+  if (!identity) return json({ error: 'invalid_token' }, 401);
+  // Entitlement gate before the rate limit: a pro_required rejection must not
+  // consume quota (checkRateLimit increments as it checks).
+  if (!(await isProUser(env, identity.googleId))) return json({ error: 'pro_required' }, 403);
+  const declaredLen = Number(request.headers.get('content-length') || 0);
+  if (declaredLen > MAX_BODY_BYTES) return json({ error: 'payload_too_large' }, 413);
+  const allowed = await checkRateLimit(env, identity.googleId, 'ai-validate', 30, 60, Date.now());
+  if (!allowed) return json({ error: 'rate_limited' }, 429);
+
+  const text = await request.text();
+  if (text.length > MAX_BODY_BYTES) return json({ error: 'payload_too_large' }, 413);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = null;
+  }
+  const validated = validateUrlsRequest(body);
+  if (!validated.ok) return json({ error: validated.error }, 400);
+  return json({ results: await checkUrls(validated.urls) });
 }
 
 // Sentinel thrown by body() when the real request text exceeds MAX_BODY_BYTES;
@@ -540,6 +570,7 @@ export default {
     if (request.method === 'GET' && url.pathname === '/auth/start') return handleAuthStart(request, env);
     if (request.method === 'GET' && url.pathname === '/entitlement') return handleEntitlement(request, env);
     if (request.method === 'POST' && url.pathname === '/ai/complete') return handleAIComplete(request, env);
+    if (request.method === 'POST' && url.pathname === '/ai/validate-urls') return handleValidateUrls(request, env);
     if (request.method === 'GET' && url.pathname === '/subscription') return handleGetSubscription(request, env);
     if (request.method === 'POST' && url.pathname === '/subscription/cancel') return handleCancelSubscription(request, env);
     if (request.method === 'POST' && url.pathname === '/subscription/resume') return handleResumeSubscription(request, env);

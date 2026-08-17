@@ -284,14 +284,37 @@ async function taskPlannerSend({ text } = {}) {
                 modelTier: 'thinking',
             });
             const turn = core.normalizeTurn(core.parseJSONContent(raw), thinking.groups || []);
-            const assistantMessage = { id: core.mintUid(), role: 'assistant', content: turn.reply, ts: Date.now() };
+            // Reachability check on the urls this turn ADDED (never re-checking
+            // pre-existing tabs), still inside the in-flight window — status
+            // stays 'thinking' so the UI shimmer covers the probes. Fail OPEN:
+            // a validator throw (or an older client without validateUrls) keeps
+            // every tab — validator downtime must never break chat.
+            let groups = turn.groups;
+            let reply = turn.reply;
+            const newUrls = core.collectNewUrls(thinking.groups || [], turn.groups);
+            if (newUrls.length > 0) {
+                try {
+                    const results = await client().validateUrls(newUrls);
+                    const invalid = new Set((Array.isArray(results) ? results : [])
+                        .filter((r) => r && r.ok === false)
+                        .map((r) => r.url));
+                    if (invalid.size > 0) {
+                        const filtered = core.dropInvalidTabs(groups, invalid);
+                        groups = filtered.groups;
+                        if (filtered.removed > 0) {
+                            reply += `\n\nI checked the new links and removed ${filtered.removed} that couldn't be reached.`;
+                        }
+                    }
+                } catch { /* fail open — keep all tabs */ }
+            }
+            const assistantMessage = { id: core.mintUid(), role: 'assistant', content: reply, ts: Date.now() };
             const state = await mutateSession((s) => {
                 // A reset/new-session mid-turn must not adopt the stale result.
                 if (!s || s.sessionId !== sessionId) return null;
                 return {
                     ...s,
                     messages: [...(s.messages || []), assistantMessage].slice(-core.MAX_STORED_MESSAGES),
-                    groups: turn.groups,
+                    groups,
                     collectionName: turn.collectionName || s.collectionName || '',
                     status: 'ready',
                     error: null,

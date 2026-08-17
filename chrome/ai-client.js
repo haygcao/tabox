@@ -159,6 +159,47 @@ async function performCompletionRequest(messages, { temperature, topK, responseC
     return data.content;
 }
 
+// The Worker's /ai/validate-urls caps a request at 20 urls; larger sets are
+// sent as sequential chunks. 30s per chunk is generous: the Worker itself
+// gives each probe a 5s deadline and runs them concurrently.
+const VALIDATE_URLS_CHUNK = 20;
+const VALIDATE_URLS_TIMEOUT_MS = 30_000;
+
+// Check reachability of AI-suggested URLs via the Worker's POST
+// /ai/validate-urls. Returns the concatenated per-url verdicts
+// [{ url, ok, status }]. Throws on missing token / non-OK / malformed reply —
+// callers treat ANY throw as fail-open (keep all tabs), so validator downtime
+// never breaks the feature that called it.
+async function validateUrls(urls) {
+    const token = await aiClientBgUtils.getAuthTokenForAI();
+    if (!token) throw new Error('Tabox AI: sign in to Tabox to use AI features');
+    const list = Array.isArray(urls) ? urls : [];
+    const results = [];
+    for (let i = 0; i < list.length; i += VALIDATE_URLS_CHUNK) {
+        const chunk = list.slice(i, i + VALIDATE_URLS_CHUNK);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), VALIDATE_URLS_TIMEOUT_MS);
+        let response;
+        try {
+            response = await fetch(`${AI_API_BASE}/ai/validate-urls`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ urls: chunk }),
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(`Tabox AI: URL validation failed (${response.status}): ${data.error || 'request_failed'}`);
+        }
+        if (!Array.isArray(data.results)) throw new Error('Tabox AI: URL validation returned a malformed reply');
+        results.push(...data.results);
+    }
+    return results;
+}
+
 // Models occasionally wrap JSON in a markdown fence even under json_schema.
 function parseJSONContent(raw) {
     const trimmed = raw.trim();
@@ -166,7 +207,7 @@ function parseJSONContent(raw) {
     return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
-const aiClientApi = { aiAvailability, createAISession, promptForJSON, requestChatCompletion };
+const aiClientApi = { aiAvailability, createAISession, promptForJSON, requestChatCompletion, validateUrls };
 
 /* istanbul ignore next */
 if (typeof globalThis !== 'undefined') globalThis.TaboxAIClient = aiClientApi;

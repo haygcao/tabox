@@ -627,6 +627,91 @@ describe('collectionToPlannerGroups', () => {
     });
 });
 
+describe('collectNewUrls', () => {
+    const prev = () => ([
+        { uid: 'g-1', title: 'A', color: 'blue', tabs: [
+            { uid: 't-1', title: '1', url: 'https://old1.com' },
+            { uid: 't-2', title: '2', url: 'https://old2.com' },
+        ] },
+    ]);
+
+    test('returns urls present in next but not in prev, deduped, order-stable', () => {
+        const next = [
+            { uid: 'g-1', title: 'A', color: 'blue', tabs: [
+                { uid: 't-1', title: '1', url: 'https://old1.com' },
+                { uid: 't-9', title: 'n1', url: 'https://new1.com' },
+            ] },
+            { uid: 'g-2', title: 'B', color: 'red', tabs: [
+                { uid: 't-10', title: 'n2', url: 'https://new2.com' },
+                { uid: 't-11', title: 'n1 again', url: 'https://new1.com' }, // dupe
+                { uid: 't-2', title: '2 moved', url: 'https://old2.com' },   // moved, not new
+            ] },
+        ];
+        expect(core.collectNewUrls(prev(), next)).toEqual(['https://new1.com', 'https://new2.com']);
+    });
+
+    test('returns [] when nothing changed or next only rearranges existing urls', () => {
+        expect(core.collectNewUrls(prev(), prev())).toEqual([]);
+        expect(core.collectNewUrls(prev(), [])).toEqual([]);
+    });
+
+    test('empty prev makes every next url new', () => {
+        const next = [{ uid: 'g', title: 'A', color: 'blue', tabs: [
+            { uid: 't', title: 'x', url: 'https://x.com' },
+        ] }];
+        expect(core.collectNewUrls([], next)).toEqual(['https://x.com']);
+    });
+
+    test('tolerates garbage input', () => {
+        expect(core.collectNewUrls(null, undefined)).toEqual([]);
+        expect(core.collectNewUrls('nope', [{ tabs: [{ title: 'no url' }] }])).toEqual([]);
+    });
+});
+
+describe('dropInvalidTabs', () => {
+    const groups = () => ([
+        { uid: 'g-1', title: 'A', color: 'blue', tabs: [
+            { uid: 't-1', title: '1', url: 'https://keep.com' },
+            { uid: 't-2', title: '2', url: 'https://drop.com' },
+        ] },
+        { uid: 'g-2', title: 'B', color: 'red', tabs: [
+            { uid: 't-3', title: '3', url: 'https://also-keep.com' },
+        ] },
+    ]);
+
+    test('removes tabs whose url is in the set and counts them', () => {
+        const input = groups();
+        const out = core.dropInvalidTabs(input, new Set(['https://drop.com']));
+        expect(out.removed).toBe(1);
+        expect(out.groups).toHaveLength(2);
+        expect(out.groups[0].tabs.map((t) => t.uid)).toEqual(['t-1']);
+        // Untouched groups pass through as the SAME references.
+        expect(out.groups[1]).toBe(input[1]);
+        // Touched groups are cloned — the input is never mutated.
+        expect(input[0].tabs).toHaveLength(2);
+    });
+
+    test('drops groups emptied by the filtering', () => {
+        const out = core.dropInvalidTabs(groups(), new Set(['https://also-keep.com']));
+        expect(out.removed).toBe(1);
+        expect(out.groups.map((g) => g.uid)).toEqual(['g-1']);
+    });
+
+    test('empty set leaves everything untouched with removed 0', () => {
+        const input = groups();
+        const out = core.dropInvalidTabs(input, new Set());
+        expect(out.removed).toBe(0);
+        expect(out.groups[0]).toBe(input[0]);
+        expect(out.groups[1]).toBe(input[1]);
+    });
+
+    test('tolerates garbage input', () => {
+        expect(core.dropInvalidTabs(null, new Set(['https://x.com']))).toEqual({ groups: [], removed: 0 });
+        expect(core.dropInvalidTabs([{ uid: 'g', title: 'A', color: 'blue' }], new Set(['https://x.com'])))
+            .toEqual({ groups: [], removed: 0 }); // no tabs array → drops as empty
+    });
+});
+
 describe('windowHistory', () => {
     test('keeps the last `max` messages projected to role/content', () => {
         const messages = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }));

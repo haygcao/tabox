@@ -51,8 +51,10 @@ const PILLS_2 = { pills: ['Plan a heist movie night', 'Learn pottery', 'Track a 
 // Stub only the chat completion; pills vs turn calls are told apart by their
 // response schema (PILLS_SCHEMA is the only one with a `pills` property).
 // Pill calls rotate through batches so the reload button gets fresh ideas.
-function stubChat(ext, turn = TURN) {
-  return ext.background.evaluate(({ pillBatches, turn: turnPayload }) => {
+// The URL validator is stubbed too: everything validates ok by default; urls
+// listed in `invalidUrls` come back unreachable (404) so the SW drops them.
+function stubChat(ext, turn = TURN, invalidUrls = []) {
+  return ext.background.evaluate(({ pillBatches, turn: turnPayload, invalidUrls: badUrls }) => {
     let pillCalls = 0;
     globalThis.TaboxAIClient = {
       ...(globalThis.TaboxAIClient || {}),
@@ -64,8 +66,11 @@ function stubChat(ext, turn = TURN) {
         pillCalls += 1;
         return JSON.stringify(batch);
       },
+      validateUrls: async (urls) => urls.map((url) => (
+        badUrls.includes(url) ? { url, ok: false, status: 404 } : { url, ok: true, status: 200 }
+      )),
     };
-  }, { pillBatches: [PILLS, PILLS_2], turn });
+  }, { pillBatches: [PILLS, PILLS_2], turn, invalidUrls });
 }
 
 async function openPlanner(popup) {
@@ -223,6 +228,26 @@ test('choose collection loads an existing collection into the planner and links 
   await expect(popup.locator('.tp-tab')).toHaveCount(4);
   await expect(popup.locator('.tp-tab', { hasText: 'Alpha' })).toBeVisible();
   await expect(popup.locator('.tp-tab', { hasText: 'Notion' })).toBeVisible();
+});
+
+test('unreachable AI-suggested urls are dropped before landing, with a note in the reply', async ({ ext }) => {
+  await seedStorage(ext, { ...buildSeed(SEED), ...proSeed() });
+  // The stubbed validator marks Skyscanner unreachable — the SW must drop it
+  // before the turn lands, so the tab never appears in the panel.
+  await stubChat(ext, TURN, ['https://www.skyscanner.com']);
+
+  const popup = await ext.popup.open();
+  await openPlanner(popup);
+
+  await popup.locator('.tp-input').fill('Plan a trip to Japan');
+  await popup.locator('.tp-input').press('Enter');
+  await expect(popup.locator('.tp-group', { hasText: 'Flights' })).toBeVisible();
+  // 3 tabs in the stubbed turn, 1 filtered out by the validator.
+  await expect(popup.locator('.tp-tab')).toHaveCount(2);
+  await expect(popup.locator('.tp-tab', { hasText: 'Skyscanner' })).toHaveCount(0);
+  await expect(
+    popup.locator('.tp-bubble', { hasText: "removed 1 that couldn't be reached" }),
+  ).toBeVisible();
 });
 
 test('session survives popup close and reattaches', async ({ ext }) => {

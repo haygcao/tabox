@@ -482,6 +482,58 @@ function collectionToPlannerGroups(collection) {
     return groups;
 }
 
+/**
+ * URLs present in `nextGroups` but not anywhere in `prevGroups` — the set a
+ * turn actually ADDED, which is what reachability validation should probe
+ * (pre-existing tabs were either validated on their own turn or brought in by
+ * the user, and must not be re-checked). Exact string match, deduped,
+ * order-stable (first appearance in nextGroups wins).
+ * @param {Array} prevGroups - Groups before the turn.
+ * @param {Array} nextGroups - Merged groups after the turn.
+ * @returns {string[]} the new urls in appearance order
+ */
+function collectNewUrls(prevGroups, nextGroups) {
+    const prevUrls = new Set();
+    for (const g of Array.isArray(prevGroups) ? prevGroups : []) {
+        for (const t of g.tabs || []) {
+            if (t && t.url) prevUrls.add(t.url);
+        }
+    }
+    const seen = new Set();
+    const out = [];
+    for (const g of Array.isArray(nextGroups) ? nextGroups : []) {
+        for (const t of g.tabs || []) {
+            const url = t && t.url;
+            if (!url || prevUrls.has(url) || seen.has(url)) continue;
+            seen.add(url);
+            out.push(url);
+        }
+    }
+    return out;
+}
+
+/**
+ * Drop every tab whose url is in `invalidUrlsSet` (exact match). Groups that
+ * lose all their tabs drop with them; groups losing nothing pass through as
+ * the SAME object references (uids never change — the panel must not
+ * re-animate untouched groups).
+ * @param {Array} groups         - Merged groups [{ uid, title, color, tabs }].
+ * @param {Set}   invalidUrlsSet - Urls confirmed unreachable.
+ * @returns {{groups: Array, removed: number}} filtered groups + dropped-tab count
+ */
+function dropInvalidTabs(groups, invalidUrlsSet) {
+    let removed = 0;
+    const out = [];
+    for (const g of Array.isArray(groups) ? groups : []) {
+        const tabs = g.tabs || [];
+        const kept = tabs.filter((t) => !(t && invalidUrlsSet.has(t.url)));
+        removed += tabs.length - kept.length;
+        if (kept.length === 0) continue; // emptied (or already empty) group drops
+        out.push(kept.length === tabs.length ? g : { ...g, tabs: kept });
+    }
+    return { groups: out, removed };
+}
+
 // Windowed chat history: the last `max` display messages, projected to the
 // { role, content } shape the Worker accepts. The current tab set rides in the
 // system prompt, so dropping old turns loses nothing structural.
@@ -550,6 +602,8 @@ const taskPlannerCoreApi = {
     normalizeTurn,
     normalizeLoadedGroups,
     collectionToPlannerGroups,
+    collectNewUrls,
+    dropInvalidTabs,
     windowHistory,
     normalizePills,
     parseJSONContent,

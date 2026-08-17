@@ -13,9 +13,16 @@ const KEY = planner.TASK_PLANNER_SESSION_KEY;
 const readStored = async () => (await browser.storage.local.get(KEY))[KEY];
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function mockAI(impl) {
+// Installs the AI client mock. `extra` overrides client members — pass a
+// custom `validateUrls` to exercise the reachability filter; by default every
+// url validates ok so existing turn tests land their tabs untouched.
+function mockAI(impl, extra = {}) {
     const fn = jest.fn(impl);
-    globalThis.TaboxAIClient = { requestChatCompletion: fn };
+    globalThis.TaboxAIClient = {
+        requestChatCompletion: fn,
+        validateUrls: jest.fn(async (urls) => urls.map((url) => ({ url, ok: true }))),
+        ...extra,
+    };
     return fn;
 }
 
@@ -540,6 +547,108 @@ describe('taskPlannerSend', () => {
         const res = await sendA;
         expect(res.ok).toBe(true);
         expect((await readStored()).status).toBe('ready');
+    });
+});
+
+describe('taskPlannerSend URL validation', () => {
+    const twoTabTurn = () => turnJSON({
+        reply: 'Added reading.',
+        changedGroups: [{ title: 'Reading', color: 'blue', tabs: [
+            { title: 'MDN', url: 'https://developer.mozilla.org' },
+            { title: 'Ghost', url: 'https://ghost.example.com' },
+        ] }],
+    });
+
+    test('drops unreachable new tabs and appends the singular note', async () => {
+        mockAI(async () => twoTabTurn(), {
+            validateUrls: jest.fn(async (urls) => urls.map((url) => ({
+                url, ok: url !== 'https://ghost.example.com', status: url === 'https://ghost.example.com' ? 404 : 200,
+            }))),
+        });
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'plan reading' });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups).toHaveLength(1);
+        expect(res.state.groups[0].tabs.map((t) => t.url)).toEqual(['https://developer.mozilla.org']);
+        expect(res.state.messages[1].content).toBe(
+            "Added reading.\n\nI checked the new links and removed 1 that couldn't be reached.",
+        );
+    });
+
+    test('drops multiple unreachable tabs with the count in the note (plural) and drops emptied groups', async () => {
+        mockAI(async () => turnJSON({
+            reply: 'Here you go.',
+            changedGroups: [
+                { title: 'Alive', color: 'blue', tabs: [{ title: 'A', url: 'https://alive.com' }] },
+                { title: 'Dead', color: 'red', tabs: [
+                    { title: 'D1', url: 'https://dead1.example.com' },
+                    { title: 'D2', url: 'https://dead2.example.com' },
+                ] },
+            ],
+        }), {
+            validateUrls: jest.fn(async (urls) => urls.map((url) => ({ url, ok: !url.includes('dead') }))),
+        });
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'plan' });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups.map((g) => g.title)).toEqual(['Alive']); // emptied group dropped
+        expect(res.state.messages[1].content).toContain("removed 2 that couldn't be reached");
+    });
+
+    test('only NEW urls are sent to the validator — pre-existing tabs are not re-checked', async () => {
+        const prevGroups = [
+            { uid: 'g-1', title: 'Flights', color: 'blue', tabs: [{ uid: 't-1', title: 'JAL', url: 'https://www.jal.com' }] },
+        ];
+        const validateUrls = jest.fn(async (urls) => urls.map((url) => ({ url, ok: true })));
+        mockAI(async () => turnJSON({
+            // Restructures Flights re-listing the existing JAL url + one new url.
+            changedGroups: [{ title: 'Flights', color: 'blue', tabs: [
+                { title: 'JAL', url: 'https://www.jal.com' },
+                { title: 'ANA', url: 'https://www.ana.co.jp' },
+            ] }],
+        }), { validateUrls });
+        await seedSession({ groups: prevGroups });
+        const res = await planner.taskPlannerSend({ text: 'more flights' });
+        expect(res.ok).toBe(true);
+        expect(validateUrls).toHaveBeenCalledTimes(1);
+        expect(validateUrls).toHaveBeenCalledWith(['https://www.ana.co.jp']);
+    });
+
+    test('validator throw → fail open: all tabs kept, no note appended', async () => {
+        mockAI(async () => twoTabTurn(), {
+            validateUrls: jest.fn(async () => { throw new Error('validator down'); }),
+        });
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'plan' });
+        expect(res.ok).toBe(true);
+        expect(res.state.status).toBe('ready');
+        expect(res.state.groups[0].tabs).toHaveLength(2);
+        expect(res.state.messages[1].content).toBe('Added reading.');
+        expect(res.state.messages[1].content).not.toContain("couldn't be reached");
+    });
+
+    test('a client without validateUrls (older SW) also fails open', async () => {
+        mockAI(async () => twoTabTurn(), { validateUrls: undefined });
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'plan' });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups[0].tabs).toHaveLength(2);
+        expect(res.state.messages[1].content).toBe('Added reading.');
+    });
+
+    test('a clarify turn (no new urls) never calls the validator', async () => {
+        const validateUrls = jest.fn(async (urls) => urls.map((url) => ({ url, ok: true })));
+        mockAI(async () => JSON.stringify({
+            reply: 'What topic would you like to research?',
+            collectionName: '',
+            changedGroups: [],
+            removedGroupTitles: [],
+            removedUrls: [],
+        }), { validateUrls });
+        await seedSession();
+        const res = await planner.taskPlannerSend({ text: 'research a topic' });
+        expect(res.ok).toBe(true);
+        expect(validateUrls).not.toHaveBeenCalled();
     });
 });
 
