@@ -364,11 +364,14 @@ async function taskPlannerLoadCollection({ uid, name, groups } = {}) {
             const normalized = core.normalizeLoadedGroups(groups);
             const tabCount = normalized.reduce((n, g) => n + (g.tabs || []).length, 0);
             const groupCount = normalized.length;
+            // offer: true → the panel renders share / add-to-folder chips
+            // under this bubble while the session stays linked.
             const announcement = {
                 id: core.mintUid(),
                 role: 'assistant',
-                content: `Loaded "${collectionName}" — ${tabCount} tab${tabCount === 1 ? '' : 's'} in ${groupCount} group${groupCount === 1 ? '' : 's'}. Tell me what you'd like to add or change!`,
+                content: `Loaded "${collectionName}" — ${tabCount} tab${tabCount === 1 ? '' : 's'} in ${groupCount} group${groupCount === 1 ? '' : 's'}. Tell me what you'd like to add or change! You can also share it or move it to a folder.`,
                 ts: Date.now(),
+                offer: true,
             };
             return {
                 ...s,
@@ -395,12 +398,21 @@ async function taskPlannerMarkSaved({ uid, name } = {}) {
     try {
         const state = await mutateSession((s) => {
             if (!s) return null;
-            return {
-                ...s,
-                linkedCollectionUid: uid,
-                collectionName: name ? String(name).slice(0, core.MAX_COLLECTION_NAME) : s.collectionName,
-                updatedAt: Date.now(),
-            };
+            const collectionName = name ? String(name).slice(0, core.MAX_COLLECTION_NAME) : s.collectionName;
+            const next = { ...s, linkedCollectionUid: uid, collectionName, updatedAt: Date.now() };
+            // First link only: offer the share / add-to-folder follow-ups in
+            // the chat (re-saves of an already-linked collection stay quiet).
+            if (s.linkedCollectionUid !== uid) {
+                const offerMessage = {
+                    id: core.mintUid(),
+                    role: 'assistant',
+                    content: `Saved "${collectionName}"! Want to share it with someone or add it to a folder?`,
+                    ts: Date.now(),
+                    offer: true,
+                };
+                next.messages = [...(s.messages || []), offerMessage].slice(-core.MAX_STORED_MESSAGES);
+            }
+            return next;
         });
         if (!state) return { ok: false, error: 'No active planner session.' };
         return { ok: true, state };

@@ -682,7 +682,8 @@ describe('taskPlannerLoadCollection', () => {
         expect(s.messages).toHaveLength(1);
         expect(s.messages[0]).toMatchObject({
             role: 'assistant',
-            content: 'Loaded "Web Dev Research" — 3 tabs in 2 groups. Tell me what you\'d like to add or change!',
+            content: 'Loaded "Web Dev Research" — 3 tabs in 2 groups. Tell me what you\'d like to add or change! You can also share it or move it to a folder.',
+            offer: true,
         });
         expect(s.messages[0].id).toBeTruthy();
         expect(typeof s.messages[0].ts).toBe('number');
@@ -696,7 +697,7 @@ describe('taskPlannerLoadCollection', () => {
             name: 'Tiny',
             groups: [{ uid: 'g-1', title: 'Only', color: 'blue', tabs: [{ uid: 't-1', title: 'One', url: 'https://one.com' }] }],
         });
-        expect(res.state.messages[0].content).toBe('Loaded "Tiny" — 1 tab in 1 group. Tell me what you\'d like to add or change!');
+        expect(res.state.messages[0].content).toBe('Loaded "Tiny" — 1 tab in 1 group. Tell me what you\'d like to add or change! You can also share it or move it to a folder.');
     });
 
     test('clamps the collection name and drops invalid tabs before counting', async () => {
@@ -783,6 +784,36 @@ describe('taskPlannerMarkSaved', () => {
         const res = await planner.taskPlannerMarkSaved({ uid: 'col-12' });
         expect(res.ok).toBe(false);
         expect(res.error).toMatch(/no active planner session/i);
+    });
+
+    test('appends an offer message on first link', async () => {
+        await seedSession();
+        const res = await planner.taskPlannerMarkSaved({ uid: 'col-9', name: 'Saved Name' });
+        expect(res.ok).toBe(true);
+        const last = res.state.messages[res.state.messages.length - 1];
+        expect(last.role).toBe('assistant');
+        expect(last.offer).toBe(true);
+        expect(last.content).toBe('Saved "Saved Name"! Want to share it with someone or add it to a folder?');
+        expect(last.id).toBeTruthy();
+        expect(typeof last.ts).toBe('number');
+        expect(await readStored()).toEqual(res.state);
+    });
+
+    test('does not re-offer when already linked to the same collection', async () => {
+        await seedSession({ linkedCollectionUid: 'col-9', collectionName: 'Saved Name' });
+        const res = await planner.taskPlannerMarkSaved({ uid: 'col-9', name: 'Saved Name' });
+        expect(res.ok).toBe(true);
+        expect(res.state.messages.some((m) => m.offer)).toBe(false);
+    });
+
+    test('offer transcript is capped at MAX_STORED_MESSAGES', async () => {
+        const messages = Array.from({ length: core.MAX_STORED_MESSAGES }, (_, i) => (
+            { id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }
+        ));
+        await seedSession({ messages });
+        const res = await planner.taskPlannerMarkSaved({ uid: 'col-13', name: 'Capped' });
+        expect(res.state.messages).toHaveLength(core.MAX_STORED_MESSAGES);
+        expect(res.state.messages[res.state.messages.length - 1].offer).toBe(true);
     });
 });
 
