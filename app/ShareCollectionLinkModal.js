@@ -115,7 +115,7 @@ export default function ShareCollectionLinkModal() {
             contentLabel={`Share ${collection.name} via link`}
             ariaHideApp={false}
             className={`modal-content share-collection-link-modal${!isPro ? ' share-modal--upsell' : ''}`}
-            overlayClassName="modal-overlay"
+            overlayClassName="modal-overlay share-collection-link-overlay"
             shouldCloseOnOverlayClick={!busy}
             shouldCloseOnEsc={!busy}
         >

@@ -114,8 +114,9 @@ test('plan a trip end-to-end: greeting, pills, turn, remove, save', async ({ ext
   await expect(popup.locator('.tp-tab')).toHaveCount(2);
 
   // Save: creates a real collection named by the AI, with the groups intact.
+  // (Scoped to the list card — the offer bubble also mentions the name.)
   await popup.locator('.tp-save-btn').click();
-  await expect(popup.getByText('Japan Trip')).toBeVisible();
+  await expect(popup.locator('.truncate_box', { hasText: 'Japan Trip' })).toBeVisible();
 
   const saved = await ext.background.evaluate(async () => {
     const { collections_index: index = {} } = await browser.storage.local.get('collections_index');
@@ -268,4 +269,60 @@ test('session survives popup close and reattaches', async ({ ext }) => {
   await expect(popup.locator('.tp-bubble', { hasText: 'Plan a trip to Japan' })).toBeVisible();
   await expect(popup.locator('.tp-group', { hasText: 'Flights' })).toBeVisible();
   await expect(popup.locator('.tp-tab')).toHaveCount(3);
+});
+
+test('post-save offer: share chip opens the share modal, folder chip moves the collection', async ({ ext }) => {
+  await seedStorage(ext, {
+    ...buildSeed({ collections: SEED.collections, folders: [{ uid: 'f1', name: 'Trips' }] }),
+    ...proSeed(),
+  });
+  await stubChat(ext);
+
+  const popup = await ext.popup.open();
+  await openPlanner(popup);
+  await popup.locator('.tp-input').fill('Plan a trip to Japan');
+  await popup.locator('.tp-input').press('Enter');
+  await expect(popup.locator('.tp-group', { hasText: 'Flights' })).toBeVisible();
+
+  // Saving appends the offer bubble with both chips.
+  await popup.locator('.tp-save-btn').click();
+  await expect(popup.locator('.tp-bubble', { hasText: 'Want to share it with someone or add it to a folder?' })).toBeVisible();
+  const chips = popup.locator('.tp-offer-chips');
+  await expect(chips.locator('.tp-offer-chip', { hasText: 'Share via link' })).toBeVisible();
+  await expect(chips.locator('.tp-offer-chip', { hasText: 'Add to folder' })).toBeVisible();
+
+  // Share chip opens the global share-link modal ABOVE the AI Tools modal.
+  await chips.locator('.tp-offer-chip', { hasText: 'Share via link' }).click();
+  await expect(popup.locator('.share-collection-link-modal')).toBeVisible();
+  await popup.locator('.share-modal-close').click();
+  await expect(popup.locator('.share-collection-link-modal')).toHaveCount(0);
+
+  // Folder chip opens the inline picker; picking moves the saved collection.
+  await chips.locator('.tp-offer-chip', { hasText: 'Add to folder' }).click();
+  await expect(popup.locator('[data-testid="tp-folder-picker"] .tp-picker-title')).toHaveText('Add to folder');
+  await popup.locator('.tp-picker-row', { hasText: 'Trips' }).click();
+  await expect(popup.locator('[data-testid="tp-folder-picker"]')).toHaveCount(0);
+  await expect
+    .poll(() => ext.background.evaluate(async () => {
+      const { collections_index: index = {} } = await browser.storage.local.get('collections_index');
+      const uid = Object.keys(index).find((k) => index[k].name === 'Japan Trip');
+      if (!uid) return null;
+      const rec = (await browser.storage.local.get(`collection_${uid}`))[`collection_${uid}`];
+      return rec ? rec.parentId : null;
+    }))
+    .toBe('f1');
+});
+
+test('choosing a collection marks the load announcement as an offer with chips', async ({ ext }) => {
+  await seedStorage(ext, { ...buildSeed(SEED), ...proSeed() });
+  await stubChat(ext);
+
+  const popup = await ext.popup.open();
+  await openPlanner(popup);
+  await popup.locator('.tp-choose-btn').click();
+  await popup.locator('.tp-picker-row', { hasText: 'Existing Collection' }).click();
+
+  await expect(popup.locator('.tp-bubble', { hasText: 'You can also share it or move it to a folder.' })).toBeVisible();
+  await expect(popup.locator('.tp-offer-chip', { hasText: 'Share via link' })).toBeVisible();
+  await expect(popup.locator('.tp-offer-chip', { hasText: 'Add to folder' })).toBeVisible();
 });
