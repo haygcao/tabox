@@ -227,9 +227,9 @@ async function doRefreshPills({ loadSummaries } = {}) {
 }
 
 // One chat turn: append the user message, flip to 'thinking', make ONE AI call
-// (system prompt carries the full current tab set), normalize, and land the
-// assistant message + full replacement groups. The handler awaits everything
-// inline. On AI failure the transcript stays intact (status 'error' + message)
+// (system prompt carries the current tab set), validate+merge the model's
+// group-level diff via normalizeTurn, and land the assistant message + merged
+// groups. The handler awaits everything inline. On AI failure the transcript stays intact (status 'error' + message)
 // so the user can simply retry. A message that was NOT appended (empty text,
 // or a turn already thinking) replies { ok: true, state, ignored: true }.
 async function taskPlannerSend({ text } = {}) {
@@ -318,9 +318,10 @@ async function taskPlannerSend({ text } = {}) {
 
 // Load an existing collection into the live session as the new starting point
 // and link the session to it. The popup does the collection I/O (it passes the
-// collection's uid/name/groups); the SW only owns session state. The incoming
-// groups double as prevGroups for normalizeTurn so their uids survive the
-// clamp — the panel doesn't re-animate items that were just loaded.
+// collection's uid/name/groups); the SW only owns session state. Groups go
+// through normalizeLoadedGroups — per-item validation with NO size caps, uids
+// preserved — so a collection of any size loads whole and the panel doesn't
+// re-animate items that were just loaded.
 async function taskPlannerLoadCollection({ uid, name, groups } = {}) {
     try {
         // The thinking check happens INSIDE the read-merge-write, like
@@ -337,7 +338,7 @@ async function taskPlannerLoadCollection({ uid, name, groups } = {}) {
                 return null;
             }
             const collectionName = String(name || '').slice(0, core.MAX_COLLECTION_NAME);
-            const normalized = core.normalizeTurn({ reply: '', collectionName, groups }, groups).groups;
+            const normalized = core.normalizeLoadedGroups(groups);
             const tabCount = normalized.reduce((n, g) => n + (g.tabs || []).length, 0);
             const groupCount = normalized.length;
             const announcement = {

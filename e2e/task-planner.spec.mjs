@@ -22,10 +22,12 @@ function proSeed() {
 }
 
 const PILLS = { pills: ['Plan a trip', 'Research a topic', 'Learn a new skill'] };
+// Diff-contract turn: only added/restructured groups ride in changedGroups;
+// unchanged groups are never echoed and removals are explicit.
 const TURN = {
   reply: 'I gathered a starter set for your Japan trip — flights and places to stay first.',
   collectionName: 'Japan Trip',
-  groups: [
+  changedGroups: [
     {
       title: 'Flights',
       color: 'blue',
@@ -40,6 +42,8 @@ const TURN = {
       tabs: [{ title: 'Booking.com', url: 'https://www.booking.com' }],
     },
   ],
+  removedGroupTitles: [],
+  removedUrls: [],
 };
 
 const PILLS_2 = { pills: ['Plan a heist movie night', 'Learn pottery', 'Track a comet'] };
@@ -47,21 +51,21 @@ const PILLS_2 = { pills: ['Plan a heist movie night', 'Learn pottery', 'Track a 
 // Stub only the chat completion; pills vs turn calls are told apart by their
 // response schema (PILLS_SCHEMA is the only one with a `pills` property).
 // Pill calls rotate through batches so the reload button gets fresh ideas.
-function stubChat(ext) {
-  return ext.background.evaluate(({ pillBatches, turn }) => {
+function stubChat(ext, turn = TURN) {
+  return ext.background.evaluate(({ pillBatches, turn: turnPayload }) => {
     let pillCalls = 0;
     globalThis.TaboxAIClient = {
       ...(globalThis.TaboxAIClient || {}),
       requestChatCompletion: async (messages, opts = {}) => {
         const schema = opts.responseConstraint || {};
         const isPills = !!(schema.properties && schema.properties.pills);
-        if (!isPills) return JSON.stringify(turn);
+        if (!isPills) return JSON.stringify(turnPayload);
         const batch = pillBatches[Math.min(pillCalls, pillBatches.length - 1)];
         pillCalls += 1;
         return JSON.stringify(batch);
       },
     };
-  }, { pillBatches: [PILLS, PILLS_2], turn: TURN });
+  }, { pillBatches: [PILLS, PILLS_2], turn });
 }
 
 async function openPlanner(popup) {
@@ -126,7 +130,11 @@ test('plan a trip end-to-end: greeting, pills, turn, remove, save', async ({ ext
   await expect(popup.locator('.tp-tab')).toHaveCount(2);
   await expect(popup.locator('.tp-save-btn')).toHaveText(/Update collection/);
 
-  // Keep refining: another turn re-lands the full stubbed set (3 tabs)…
+  // Keep refining: the stub's changedGroups restructure "Flights" with its
+  // complete content, so the merge re-adds the removed Skyscanner tab —
+  // 2 tabs in the session + 1 re-added = 3. This proves a changedGroup
+  // replaces the same-titled group wholesale rather than the turn wiping or
+  // duplicating the set.
   await popup.locator('.tp-input').fill('Add back the flight comparison site');
   await popup.locator('.tp-input').press('Enter');
   await expect(popup.locator('.tp-tab')).toHaveCount(3);
@@ -171,7 +179,17 @@ test('choose collection loads an existing collection into the planner and links 
     chromeGroups: [{ id: 1, uid: 'g1', title: 'Sources', color: 'blue', collapsed: false }],
   };
   await seedStorage(ext, { ...buildSeed({ collections: [seeded, ...SEED.collections] }), ...proSeed() });
-  await stubChat(ext);
+  // The turn stub ADDS one new group and touches nothing else — the merge
+  // must layer it on top of the loaded groups, not clobber them.
+  await stubChat(ext, {
+    reply: 'Added a notes group for capturing findings.',
+    collectionName: 'Research Stack',
+    changedGroups: [
+      { title: 'Notes', color: 'yellow', tabs: [{ title: 'Notion', url: 'https://www.notion.so' }] },
+    ],
+    removedGroupTitles: [],
+    removedUrls: [],
+  });
 
   const popup = await ext.popup.open();
   await openPlanner(popup);
@@ -194,6 +212,17 @@ test('choose collection loads an existing collection into the planner and links 
   await expect(popup.locator('.tp-save-btn')).toHaveText(/Update collection/);
   // Linked sessions hide the picker triggers.
   await expect(popup.locator('.tp-choose-btn')).toHaveCount(0);
+
+  // Chatting after a load must MERGE, not clobber: the stub's diff adds a
+  // "Notes" group only, so every loaded group and tab survives alongside it.
+  await popup.locator('.tp-input').fill('Add a notes app');
+  await popup.locator('.tp-input').press('Enter');
+  await expect(popup.locator('.tp-group', { hasText: 'Notes' })).toBeVisible();
+  await expect(popup.locator('.tp-group', { hasText: 'Sources' })).toBeVisible();
+  await expect(popup.locator('.tp-group', { hasText: 'More tabs' })).toBeVisible();
+  await expect(popup.locator('.tp-tab')).toHaveCount(4);
+  await expect(popup.locator('.tp-tab', { hasText: 'Alpha' })).toBeVisible();
+  await expect(popup.locator('.tp-tab', { hasText: 'Notion' })).toBeVisible();
 });
 
 test('session survives popup close and reattaches', async ({ ext }) => {

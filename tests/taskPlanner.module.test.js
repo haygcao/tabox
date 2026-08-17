@@ -19,11 +19,13 @@ function mockAI(impl) {
     return fn;
 }
 
-function turnJSON({ reply = 'Here you go', collectionName = 'My Plan', groups } = {}) {
+function turnJSON({ reply = 'Here you go', collectionName = 'My Plan', changedGroups, removedGroupTitles = [], removedUrls = [] } = {}) {
     return JSON.stringify({
         reply,
         collectionName,
-        groups: groups || [{ title: 'Reading', color: 'blue', tabs: [{ title: 'MDN', url: 'https://developer.mozilla.org' }] }],
+        changedGroups: changedGroups || [{ title: 'Reading', color: 'blue', tabs: [{ title: 'MDN', url: 'https://developer.mozilla.org' }] }],
+        removedGroupTitles,
+        removedUrls,
     });
 }
 
@@ -327,19 +329,41 @@ describe('taskPlannerSend', () => {
         expect(sent[1]).toEqual({ role: 'user', content: 'msg 8' });
     });
 
-    test('an off-topic turn (full set echoed back) keeps groups identical, uids included', async () => {
+    test('an off-topic turn (empty ops arrays) keeps groups identical, uids included', async () => {
         const prevGroups = [
             { uid: 'g-1', title: 'Flights', color: 'blue', tabs: [{ uid: 't-1', title: 'JAL', url: 'https://www.jal.com' }] },
         ];
         mockAI(async () => JSON.stringify({
             reply: 'I can only help you collect websites for a topic.',
             collectionName: 'Trip',
-            groups: [{ title: 'Flights', color: 'blue', tabs: [{ title: 'JAL', url: 'https://www.jal.com' }] }],
+            changedGroups: [],
+            removedGroupTitles: [],
+            removedUrls: [],
         }));
         await seedSession({ groups: prevGroups, collectionName: 'Trip' });
         const res = await planner.taskPlannerSend({ text: 'what is 2+2?' });
         expect(res.state.groups).toEqual(prevGroups);
         expect(res.state.messages[1].content).toMatch(/^I can only help you collect websites/);
+    });
+
+    test('merges a diff turn onto the existing groups instead of replacing them', async () => {
+        const prevGroups = [
+            { uid: 'g-1', title: 'Flights', color: 'blue', tabs: [{ uid: 't-1', title: 'JAL', url: 'https://www.jal.com' }] },
+            { uid: 'g-2', title: 'Hotels', color: 'red', tabs: [{ uid: 't-2', title: 'Booking', url: 'https://www.booking.com' }] },
+        ];
+        mockAI(async () => turnJSON({
+            reply: 'Added food spots and dropped Booking.',
+            collectionName: 'Trip',
+            changedGroups: [{ title: 'Food', color: 'green', tabs: [{ title: 'Tabelog', url: 'https://tabelog.com' }] }],
+            removedUrls: ['https://www.booking.com'],
+        }));
+        await seedSession({ groups: prevGroups, collectionName: 'Trip' });
+        const res = await planner.taskPlannerSend({ text: 'add food, drop booking' });
+        expect(res.ok).toBe(true);
+        // Untouched group survives byte-identical; Hotels emptied out; Food appended.
+        expect(res.state.groups.map((g) => g.title)).toEqual(['Flights', 'Food']);
+        expect(res.state.groups[0]).toEqual(prevGroups[0]);
+        expect(res.state.groups[1].tabs[0]).toMatchObject({ title: 'Tabelog', url: 'https://tabelog.com' });
     });
 
     test('parses a markdown-fenced JSON reply', async () => {
@@ -540,8 +564,8 @@ describe('taskPlannerLoadCollection', () => {
         expect(s.error).toBeNull();
         expect(s.linkedCollectionUid).toBe('col-1');
         expect(s.collectionName).toBe('Web Dev Research');
-        // Normalized through normalizeTurn with the incoming groups as
-        // prevGroups — group AND tab uids survive.
+        // Normalized through normalizeLoadedGroups (no size caps) — group AND
+        // tab uids survive.
         expect(s.groups.map((g) => g.uid)).toEqual(['g-1', 'g-2']);
         expect(s.groups[0].tabs.map((t) => t.uid)).toEqual(['t-1', 't-2']);
         expect(s.groups[1].tabs.map((t) => t.uid)).toEqual(['t-3']);
@@ -579,6 +603,20 @@ describe('taskPlannerLoadCollection', () => {
         expect(res.state.collectionName).toHaveLength(core.MAX_COLLECTION_NAME);
         expect(res.state.groups[0].tabs.map((t) => t.url)).toEqual(['https://good.com']);
         expect(res.state.messages[0].content).toContain('1 tab in 1 group');
+    });
+
+    test('loads a big collection whole — no group/tab caps on the load path', async () => {
+        await seedSession();
+        const groups = Array.from({ length: 25 }, (_, gi) => ({
+            uid: `g-${gi}`, title: `G${gi}`, color: 'blue',
+            tabs: Array.from({ length: 20 }, (_, ti) => ({ uid: `t-${gi}-${ti}`, title: 't', url: `https://site${gi}-${ti}.com` })),
+        }));
+        const res = await planner.taskPlannerLoadCollection({ uid: 'col-big', name: 'Big', groups });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups).toHaveLength(25);
+        expect(res.state.groups.reduce((n, g) => n + g.tabs.length, 0)).toBe(500);
+        // The announcement counts the FULL loaded set.
+        expect(res.state.messages[0].content).toContain('500 tabs in 25 groups');
     });
 
     test('appends to an existing transcript, capped at MAX_STORED_MESSAGES', async () => {
