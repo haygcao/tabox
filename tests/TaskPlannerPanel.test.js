@@ -11,6 +11,7 @@ jest.mock('../app/toastHelpers', () => ({ showUndoToast: jest.fn(), showSuccessT
 
 import TaskPlannerPanel from '../app/ai/TaskPlannerPanel';
 import { loadAllCollections, loadSingleCollection } from '../app/utils/storageUtils';
+import { shareCollectionLinkModalState } from '../app/atoms/sharedFoldersState';
 import { showSuccessToast } from '../app/toastHelpers';
 import { browser } from '../static/globals';
 
@@ -617,4 +618,86 @@ test('reload button disappears with the pills once the conversation starts', asy
         messages: [{ id: 'm1', role: 'user', content: 'Plan a trip', ts: 1 }],
     }));
     expect(screen.queryByRole('button', { name: 'New ideas' })).not.toBeInTheDocument();
+});
+
+// ── Post-save / post-link offer chips ───────────────────────────────────────
+
+const OFFER_SESSION = (over = {}) => baseSession({
+    pills: [],
+    groups: GROUPS,
+    linkedCollectionUid: 'col-1',
+    collectionName: 'Trip',
+    messages: [{
+        id: 'm-offer',
+        role: 'assistant',
+        content: 'Saved "Trip"! Want to share it with someone or add it to a folder?',
+        ts: 1,
+        offer: true,
+    }],
+    ...over,
+});
+
+describe('offer chips', () => {
+    test('renders share and folder chips under the latest offer message while linked', async () => {
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        await renderPanel();
+
+        expect(screen.getByRole('button', { name: /Share via link/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Add to folder/ })).toBeInTheDocument();
+    });
+
+    test('only the latest offer message gets chips', async () => {
+        const messages = [
+            { id: 'm1', role: 'assistant', content: 'Loaded "Trip" — old offer.', ts: 1, offer: true },
+            { id: 'm2', role: 'user', content: 'add hotels', ts: 2 },
+            { id: 'm3', role: 'assistant', content: 'Saved "Trip"! Want to share it with someone or add it to a folder?', ts: 3, offer: true },
+        ];
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION({ messages }) }) });
+        await renderPanel();
+
+        expect(screen.getAllByRole('button', { name: /Share via link/ })).toHaveLength(1);
+    });
+
+    test('hides chips when the session is not linked', async () => {
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION({ linkedCollectionUid: null }) }) });
+        await renderPanel();
+
+        expect(screen.queryByRole('button', { name: /Share via link/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Add to folder/ })).not.toBeInTheDocument();
+    });
+
+    test('share chip loads the collection and opens the share modal atom', async () => {
+        const full = { uid: 'col-1', name: 'Trip', tabs: [], chromeGroups: [] };
+        loadSingleCollection.mockResolvedValue(full);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        const { store } = await renderPanel();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /Share via link/ }));
+        });
+
+        expect(loadSingleCollection).toHaveBeenCalledWith('col-1');
+        expect(store.get(shareCollectionLinkModalState)).toBe(full);
+    });
+
+    test('share chip surfaces an error when the collection is gone', async () => {
+        loadSingleCollection.mockResolvedValue(null);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        const { store } = await renderPanel();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /Share via link/ }));
+        });
+
+        expect(screen.getByText(/Could not find the saved collection/)).toBeInTheDocument();
+        expect(store.get(shareCollectionLinkModalState)).toBeNull();
+    });
+
+    test('chips are disabled while a turn is thinking', async () => {
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION({ status: 'thinking' }) }) });
+        await renderPanel();
+
+        expect(screen.getByRole('button', { name: /Share via link/ })).toBeDisabled();
+        expect(screen.getByRole('button', { name: /Add to folder/ })).toBeDisabled();
+    });
 });

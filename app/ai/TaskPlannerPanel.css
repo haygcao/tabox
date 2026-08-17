@@ -299,6 +299,21 @@ html.performance-mode .tp-thinking-text {
     cursor: default;
 }
 
+/* Share / add-to-folder chips under the latest offer bubble. Left margin
+ * aligns them past the assistant avatar (20px avatar + 8px gap). */
+.tp-offer-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 2px 0 4px 28px;
+}
+
+.tp-offer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
 /* Loading skeleton pills while the AI generates suggestions. */
 .tp-pill--skeleton {
     display: inline-block;

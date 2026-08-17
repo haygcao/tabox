@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useSetAtom } from 'jotai';
-import { MdClose, MdFolderOpen, MdRefresh, MdSend } from 'react-icons/md';
+import { useAtomValue, useSetAtom } from 'jotai';
+import { MdClose, MdDriveFileMoveOutline, MdFolderOpen, MdLink, MdRefresh, MdSend } from 'react-icons/md';
 import { BsStars } from 'react-icons/bs';
 import { aiProcessingUidsState } from '../atoms/aiState';
+import { shareCollectionLinkModalState } from '../atoms/sharedFoldersState';
+import { isProState } from '../atoms/premiumState';
+import ProBadge from '../ProBadge';
 import TaboxCollection from '../model/TaboxCollection';
 import { applyUid } from '../utils';
 import { loadAllCollections, loadSingleCollection } from '../utils/storageUtils';
@@ -92,6 +95,10 @@ const mergeRemovedBack = (nextGroups, prevGroups, removedUids) => {
 // worker, so closing the popup never aborts a turn.
 function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     const setAiProcessingUids = useSetAtom(aiProcessingUidsState);
+    // Share chip → the globally mounted ShareCollectionLinkModal (App.js); it
+    // handles sign-in + the Pro paywall itself, so the chip never pre-gates.
+    const setShareCollectionLink = useSetAtom(shareCollectionLinkModalState);
+    const isPro = useAtomValue(isProState);
 
     const [session, setSession] = useState(null);
     const [input, setInput] = useState('');
@@ -148,6 +155,14 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     // after loading one via the picker) — Save becomes an in-place Update.
     const linkedUid = session?.linkedCollectionUid || null;
     const hasUserMessage = messages.some((m) => m.role === 'user');
+    // Only the newest offer bubble carries the share / add-to-folder chips
+    // (older offers keep their text but go quiet).
+    const latestOfferId = useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].offer) return messages[i].id;
+        }
+        return null;
+    }, [messages]);
     const totalTabs = useMemo(() => groups.reduce((n, g) => n + ((g.tabs || []).length), 0), [groups]);
 
     // ── Session subscription ────────────────────────────────────────────────
@@ -493,6 +508,26 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         }
     }, [saving, totalTabs, nameDraft, aiName, groups, linkedUid, updateRemoteData, onDataUpdate, setAiProcessingUids]);
 
+    // Share the linked collection via the global share-link modal. The modal
+    // needs the FULL stored record (it snapshots name + tabs + groups).
+    const handleShareLink = useCallback(async () => {
+        setActionError(null);
+        try {
+            const full = linkedUid ? await loadSingleCollection(linkedUid) : null;
+            if (!full) {
+                setActionError('Could not find the saved collection. Try saving again.');
+                return;
+            }
+            setShareCollectionLink(full);
+        } catch (e) {
+            console.error('Task Planner: share link failed', e);
+            setActionError('Could not find the saved collection. Try saving again.');
+        }
+    }, [linkedUid, setShareCollectionLink]);
+
+    // Placeholder — replaced by the folder picker (next commit).
+    const openFolderPicker = useCallback(() => {}, []);
+
     // ── Choose Collection (start from an existing collection) ───────────────
     const openPicker = useCallback(async () => {
         if (isThinking || saving) return;
@@ -592,14 +627,38 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                             </div>
                         )}
                         {messages.map((m, i) => (
-                            <div
-                                key={m.id}
-                                className={`tp-msg ${m.role === 'user' ? 'tp-msg--user' : 'tp-msg--assistant'}`}
-                                style={{ animationDelay: `${Math.min(i, 6) * 0.05}s` }}
-                            >
-                                {m.role === 'assistant' && <span className="tp-avatar" aria-hidden="true">T</span>}
-                                <div className="tp-bubble">{m.content}</div>
-                            </div>
+                            <React.Fragment key={m.id}>
+                                <div
+                                    className={`tp-msg ${m.role === 'user' ? 'tp-msg--user' : 'tp-msg--assistant'}`}
+                                    style={{ animationDelay: `${Math.min(i, 6) * 0.05}s` }}
+                                >
+                                    {m.role === 'assistant' && <span className="tp-avatar" aria-hidden="true">T</span>}
+                                    <div className="tp-bubble">{m.content}</div>
+                                </div>
+                                {m.offer && m.id === latestOfferId && !!linkedUid && (
+                                    <div className="tp-offer-chips" data-testid="tp-offer-chips">
+                                        <button
+                                            type="button"
+                                            className="tp-pill tp-offer-chip"
+                                            disabled={isThinking || saving}
+                                            onClick={handleShareLink}
+                                        >
+                                            <MdLink size={14} aria-hidden="true" />
+                                            Share via link
+                                            {!isPro && <ProBadge />}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="tp-pill tp-offer-chip"
+                                            disabled={isThinking || saving}
+                                            onClick={openFolderPicker}
+                                        >
+                                            <MdDriveFileMoveOutline size={14} aria-hidden="true" />
+                                            Add to folder
+                                        </button>
+                                    </div>
+                                )}
+                            </React.Fragment>
                         ))}
                         {isThinking && (
                             <div className="tp-msg tp-msg--assistant" data-testid="tp-thinking">
