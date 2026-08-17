@@ -3,11 +3,14 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom';
 import { Provider, createStore } from 'jotai';
 
-jest.mock('../app/utils/storageUtils', () => ({ loadAllCollections: jest.fn().mockResolvedValue([]) }));
+jest.mock('../app/utils/storageUtils', () => ({
+    loadAllCollections: jest.fn().mockResolvedValue([]),
+    loadSingleCollection: jest.fn().mockResolvedValue(null),
+}));
 jest.mock('../app/toastHelpers', () => ({ showUndoToast: jest.fn(), showSuccessToast: jest.fn() }));
 
 import TaskPlannerPanel from '../app/ai/TaskPlannerPanel';
-import { loadAllCollections } from '../app/utils/storageUtils';
+import { loadAllCollections, loadSingleCollection } from '../app/utils/storageUtils';
 import { showSuccessToast } from '../app/toastHelpers';
 import { browser } from '../static/globals';
 
@@ -83,6 +86,7 @@ const renderPanel = async ({ updateRemoteData = jest.fn(), onDataUpdate = jest.f
 beforeEach(() => {
     jest.clearAllMocks();
     loadAllCollections.mockResolvedValue([]);
+    loadSingleCollection.mockResolvedValue(null);
     storageListeners = [];
     browser.storage.onChanged.addListener = jest.fn((fn) => { storageListeners.push(fn); });
     browser.storage.onChanged.removeListener = jest.fn((fn) => {
@@ -175,15 +179,21 @@ test('renders groups and tabs from state; the remove button sends taskPlannerRem
     ]);
 });
 
-test('save builds the collection (groups + groupUids) and calls updateRemoteData with the AI name', async () => {
+test('save builds the collection (groups + groupUids), links via markSaved, and does NOT reset the chat', async () => {
     const existing = { uid: 'existing', name: 'Old', tabs: [], chromeGroups: [] };
     loadAllCollections.mockResolvedValue([existing]);
     mockMessages({
-        // Mount start returns the in-progress plan; the post-save force start
-        // returns a fresh session.
-        taskPlannerStart: (msg) => ((msg.payload && msg.payload.force)
-            ? { ok: true, state: baseSession() }
-            : { ok: true, state: baseSession({ groups: GROUPS, collectionName: 'Japan Trip' }) }),
+        taskPlannerStart: () => ({
+            ok: true,
+            state: baseSession({
+                groups: GROUPS,
+                collectionName: 'Japan Trip',
+                messages: [
+                    { id: 'm1', role: 'user', content: 'Plan a trip to Japan', ts: 1 },
+                    { id: 'm2', role: 'assistant', content: 'Here are some starting points.', ts: 2 },
+                ],
+            }),
+        }),
     });
     const updateRemoteData = jest.fn().mockResolvedValue(undefined);
     await renderPanel({ updateRemoteData });
@@ -217,12 +227,115 @@ test('save builds the collection (groups + groupUids) and calls updateRemoteData
     }
 
     expect(showSuccessToast).toHaveBeenCalledWith('Collection saved!');
-    // The session is reset and a fresh plan started (force) after saving;
-    // the mount itself sent the first (plain) start.
-    expect(sentMessages('taskPlannerReset')).toHaveLength(1);
-    expect(sentMessages('taskPlannerStart')).toEqual([
-        { type: 'taskPlannerStart' },
-        { type: 'taskPlannerStart', payload: { force: true } },
+    // Saving no longer resets the chat: the session gets LINKED to the saved
+    // collection instead, so the user can keep refining and update in place.
+    expect(sentMessages('taskPlannerReset')).toHaveLength(0);
+    expect(sentMessages('taskPlannerStart')).toEqual([{ type: 'taskPlannerStart' }]);
+    expect(sentMessages('taskPlannerMarkSaved')).toEqual([
+        { type: 'taskPlannerMarkSaved', payload: { uid: collection.uid, name: 'Japan Trip' } },
+    ]);
+    // Transcript and tab set survive the save.
+    expect(screen.getByText('Plan a trip to Japan')).toBeInTheDocument();
+    expect(screen.getByText('Here are some starting points.')).toBeInTheDocument();
+    expect(screen.getByText('Google Flights')).toBeInTheDocument();
+});
+
+test('linked session shows Update collection and updates the collection in place', async () => {
+    const other = { uid: 'other', name: 'Other', tabs: [], chromeGroups: [] };
+    const existing = {
+        uid: 'lk1',
+        name: 'Japan Trip',
+        parentId: 'folder1',
+        color: '#123456',
+        createdOn: 111,
+        order: 3,
+        isFavorite: true,
+        favoriteOrder: 2,
+        tabs: [],
+        chromeGroups: [],
+    };
+    loadAllCollections.mockResolvedValue([other, existing]);
+    mockMessages({
+        taskPlannerStart: () => ({
+            ok: true,
+            state: baseSession({
+                groups: GROUPS,
+                collectionName: 'Japan Trip',
+                linkedCollectionUid: 'lk1',
+                messages: [{ id: 'm1', role: 'user', content: 'Plan a trip to Japan', ts: 1 }],
+            }),
+        }),
+    });
+    const updateRemoteData = jest.fn().mockResolvedValue(undefined);
+    await renderPanel({ updateRemoteData });
+
+    expect(screen.queryByRole('button', { name: /save collection/i })).not.toBeInTheDocument();
+    await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /update collection/i }));
+    });
+
+    await waitFor(() => expect(updateRemoteData).toHaveBeenCalledTimes(1));
+    const written = updateRemoteData.mock.calls[0][0];
+    // In-place replacement: no new collection appended, `other` untouched.
+    expect(written).toHaveLength(2);
+    expect(written[0]).toBe(other);
+
+    const updated = written[1];
+    expect(updated).not.toBe(existing);
+    expect(updated.uid).toBe('lk1');
+    // Identity/metadata preserved from the stored record.
+    expect(updated.parentId).toBe('folder1');
+    expect(updated.color).toBe('#123456');
+    expect(updated.createdOn).toBe(111);
+    expect(updated.order).toBe(3);
+    expect(updated.isFavorite).toBe(true);
+    expect(updated.favoriteOrder).toBe(2);
+    // Content comes from the session.
+    expect(updated.tabs.map((t) => t.url)).toEqual([
+        'https://flights.google.com/',
+        'https://kayak.com/',
+        'https://booking.com/',
+    ]);
+    expect(updated.chromeGroups.map((g) => g.title)).toEqual(['Flights', 'Hotels']);
+
+    expect(showSuccessToast).toHaveBeenCalledWith('Collection updated!');
+    // Already linked — no re-link message, no reset.
+    expect(sentMessages('taskPlannerMarkSaved')).toHaveLength(0);
+    expect(sentMessages('taskPlannerReset')).toHaveLength(0);
+});
+
+test('linked but deleted collection falls back to append + markSaved re-link', async () => {
+    const other = { uid: 'other', name: 'Other', tabs: [], chromeGroups: [] };
+    loadAllCollections.mockResolvedValue([other]); // linked uid gone from storage
+    mockMessages({
+        taskPlannerStart: () => ({
+            ok: true,
+            state: baseSession({
+                groups: GROUPS,
+                collectionName: 'Japan Trip',
+                linkedCollectionUid: 'deleted-uid',
+            }),
+        }),
+    });
+    const updateRemoteData = jest.fn().mockResolvedValue(undefined);
+    await renderPanel({ updateRemoteData });
+
+    await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /update collection/i }));
+    });
+
+    await waitFor(() => expect(updateRemoteData).toHaveBeenCalledTimes(1));
+    const written = updateRemoteData.mock.calls[0][0];
+    expect(written).toHaveLength(2);
+    expect(written[0]).toBe(other);
+    const collection = written[1];
+    expect(collection.uid).not.toBe('deleted-uid');
+    expect(collection.name).toBe('Japan Trip');
+
+    expect(showSuccessToast).toHaveBeenCalledWith('Collection saved!');
+    // Re-linked to the NEW uid.
+    expect(sentMessages('taskPlannerMarkSaved')).toEqual([
+        { type: 'taskPlannerMarkSaved', payload: { uid: collection.uid, name: 'Japan Trip' } },
     ]);
 });
 
@@ -381,6 +494,115 @@ test('reload button sends taskPlannerRefreshPills and spins while a batch genera
     await fireSessionChange(baseSession({ pills: ['Plan a heist', 'Learn pottery', 'Track a comet'] }));
     expect(screen.getByRole('button', { name: 'Plan a heist' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New ideas' })).toBeEnabled();
+});
+
+test('choose-collection triggers are hidden while the session is linked', async () => {
+    mockMessages({
+        taskPlannerStart: () => ({
+            ok: true,
+            state: baseSession({ pills: [], linkedCollectionUid: 'lk1', groups: GROUPS }),
+        }),
+    });
+    await renderPanel();
+
+    expect(screen.queryByRole('button', { name: 'Start from a collection' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tp-picker')).not.toBeInTheDocument();
+});
+
+test('choose-collection opens the picker, loads the pick, and sends the converted planner groups', async () => {
+    // metadataOnly listing rows (index shape: uid + name + tabCount + lastUpdated).
+    loadAllCollections.mockImplementation(async (options = {}) => {
+        expect(options.metadataOnly).toBe(true);
+        return [
+            { uid: 'c-old', name: 'Older Collection', tabCount: 1, lastUpdated: 10 },
+            { uid: 'c-research', name: 'Research Stack', tabCount: 3, lastUpdated: 99 },
+        ];
+    });
+    // Full record for the picked collection: one real chrome group + one
+    // ungrouped tab (falls into "More tabs" with a hostname title).
+    loadSingleCollection.mockResolvedValue({
+        uid: 'c-research',
+        name: 'Research Stack',
+        chromeGroups: [{ id: 1, uid: 'cg1', title: 'Sources', color: 'blue', collapsed: false }],
+        tabs: [
+            { uid: 'tA', title: 'Alpha', url: 'https://alpha.example.com/', groupId: 1, groupUid: 'cg1' },
+            { uid: 'tB', title: '', url: 'https://beta.example.com/' },
+        ],
+    });
+    mockMessages({
+        taskPlannerStart: () => ({ ok: true, state: baseSession({ pills: [] }) }),
+        taskPlannerLoadCollection: () => ({ ok: true, state: baseSession({ linkedCollectionUid: 'c-research' }) }),
+    });
+    await renderPanel();
+
+    // Two triggers while unlinked: the header icon and the empty-state text
+    // button (same accessible name).
+    const triggers = screen.getAllByRole('button', { name: 'Start from a collection' });
+    expect(triggers).toHaveLength(2);
+    await act(async () => {
+        fireEvent.click(triggers[0]);
+    });
+
+    // Picker lists the user's collections, most recently updated first.
+    expect(screen.getByTestId('tp-picker')).toBeInTheDocument();
+    expect(screen.getByText('Choose a collection')).toBeInTheDocument();
+    const rows = screen.getAllByRole('button', { name: /Collection|Research Stack/ })
+        .filter((b) => b.className.includes('tp-picker-row'));
+    expect(rows.map((r) => r.textContent)).toEqual([
+        'Research Stack3 tabs',
+        'Older Collection1 tab',
+    ]);
+
+    await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Research Stack/ }));
+    });
+
+    expect(loadSingleCollection).toHaveBeenCalledWith('c-research');
+    const loads = sentMessages('taskPlannerLoadCollection');
+    expect(loads).toHaveLength(1);
+    expect(loads[0].payload.uid).toBe('c-research');
+    expect(loads[0].payload.name).toBe('Research Stack');
+    // Converted planner-groups shape: grouped tab keeps its group (original
+    // uid preserved); the ungrouped tab lands in a trailing "More tabs" group
+    // with a hostname-derived title.
+    expect(loads[0].payload.groups).toEqual([
+        {
+            uid: 'cg1',
+            title: 'Sources',
+            color: 'blue',
+            tabs: [{ uid: 'tA', title: 'Alpha', url: 'https://alpha.example.com/' }],
+        },
+        {
+            uid: expect.any(String),
+            title: 'More tabs',
+            color: 'grey',
+            tabs: [{ uid: 'tB', title: 'beta.example.com', url: 'https://beta.example.com/' }],
+        },
+    ]);
+
+    // Picker closes on a successful load (the linked state itself renders via
+    // storage.onChanged from the SW).
+    expect(screen.queryByTestId('tp-picker')).not.toBeInTheDocument();
+});
+
+test('a failed collection load surfaces the error and keeps the picker open', async () => {
+    loadAllCollections.mockResolvedValue([{ uid: 'c1', name: 'Trip', tabCount: 2, lastUpdated: 1 }]);
+    loadSingleCollection.mockResolvedValue({ uid: 'c1', name: 'Trip', tabs: [{ uid: 't', title: 'T', url: 'https://t.example.com/' }], chromeGroups: [] });
+    mockMessages({
+        taskPlannerStart: () => ({ ok: true, state: baseSession({ pills: [] }) }),
+        taskPlannerLoadCollection: () => ({ ok: false, error: 'Session expired.' }),
+    });
+    await renderPanel();
+
+    await act(async () => {
+        fireEvent.click(screen.getAllByRole('button', { name: 'Start from a collection' })[0]);
+    });
+    await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Trip/ }));
+    });
+
+    expect(screen.getByText('Session expired.')).toBeInTheDocument();
+    expect(screen.getByTestId('tp-picker')).toBeInTheDocument();
 });
 
 test('reload button disappears with the pills once the conversation starts', async () => {

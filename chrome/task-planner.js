@@ -163,6 +163,7 @@ async function doTaskPlannerStart({ force = false, loadSummaries } = {}) {
             messages: [],
             groups: [],
             collectionName: '',
+            linkedCollectionUid: null, // set when the session is linked to a saved collection
             error: null,
             createdAt: now,
             updatedAt: now,
@@ -315,6 +316,75 @@ async function taskPlannerSend({ text } = {}) {
     }
 }
 
+// Load an existing collection into the live session as the new starting point
+// and link the session to it. The popup does the collection I/O (it passes the
+// collection's uid/name/groups); the SW only owns session state. The incoming
+// groups double as prevGroups for normalizeTurn so their uids survive the
+// clamp — the panel doesn't re-animate items that were just loaded.
+async function taskPlannerLoadCollection({ uid, name, groups } = {}) {
+    try {
+        // The thinking check happens INSIDE the read-merge-write, like
+        // taskPlannerSend — a standalone pre-check would race an in-flight
+        // turn's thinking write (TOCTOU). Closure variables carry the verdict.
+        let ignored = false;
+        let hadSession = false;
+        const state = await mutateSession((s) => {
+            if (!s) return null;
+            hadSession = true;
+            // A turn is mid-flight — loading now would clobber its result. Ignore, don't error.
+            if (s.status === 'thinking') {
+                ignored = true;
+                return null;
+            }
+            const collectionName = String(name || '').slice(0, core.MAX_COLLECTION_NAME);
+            const normalized = core.normalizeTurn({ reply: '', collectionName, groups }, groups).groups;
+            const tabCount = normalized.reduce((n, g) => n + (g.tabs || []).length, 0);
+            const groupCount = normalized.length;
+            const announcement = {
+                id: core.mintUid(),
+                role: 'assistant',
+                content: `Loaded "${collectionName}" — ${tabCount} tab${tabCount === 1 ? '' : 's'} in ${groupCount} group${groupCount === 1 ? '' : 's'}. Tell me what you'd like to add or change!`,
+                ts: Date.now(),
+            };
+            return {
+                ...s,
+                messages: [...(s.messages || []), announcement].slice(-core.MAX_STORED_MESSAGES),
+                groups: normalized,
+                collectionName,
+                linkedCollectionUid: uid,
+                status: 'ready',
+                error: null,
+                updatedAt: Date.now(),
+            };
+        });
+        if (!hadSession) return { ok: false, error: 'No active planner session. Start a new plan first.' };
+        if (ignored) return { ok: true, state, ignored: true };
+        return { ok: true, state };
+    } catch (error) {
+        return { ok: false, error: errorMessage(error) };
+    }
+}
+
+// After the popup saves the session's tab set as a real collection, it reports
+// the saved collection's uid (and final name) back so the session stays linked.
+async function taskPlannerMarkSaved({ uid, name } = {}) {
+    try {
+        const state = await mutateSession((s) => {
+            if (!s) return null;
+            return {
+                ...s,
+                linkedCollectionUid: uid,
+                collectionName: name ? String(name).slice(0, core.MAX_COLLECTION_NAME) : s.collectionName,
+                updatedAt: Date.now(),
+            };
+        });
+        if (!state) return { ok: false, error: 'No active planner session.' };
+        return { ok: true, state };
+    } catch (error) {
+        return { ok: false, error: errorMessage(error) };
+    }
+}
+
 async function taskPlannerRemoveTab({ groupUid, tabUid } = {}) {
     try {
         const state = await mutateSession((s) => {
@@ -353,6 +423,8 @@ const taskPlannerApi = {
     taskPlannerStart,
     taskPlannerRefreshPills,
     taskPlannerSend,
+    taskPlannerLoadCollection,
+    taskPlannerMarkSaved,
     taskPlannerRemoveTab,
     taskPlannerReset,
 };

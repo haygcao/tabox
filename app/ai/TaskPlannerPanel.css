@@ -243,6 +243,8 @@ html.performance-mode .tp-msg,
 html.performance-mode .tp-pill,
 html.performance-mode .tp-pill--skeleton,
 html.performance-mode .tp-group,
+html.performance-mode .tp-picker,
+html.performance-mode .tp-picker-row--loading,
 html.performance-mode .tp-tab--new {
     animation: none !important;
 }
@@ -476,6 +478,55 @@ html.performance-mode .tp-pills-refresh--spinning {
     gap: 2px;
 }
 
+.tp-tabs-header-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* The name input's -8px side margins are a column-layout trick; inside the
+ * header row only the left one applies (the picker button sits to the right). */
+.tp-tabs-header-row .tp-collection-name {
+    flex: 1 1 auto;
+    margin-right: 0;
+}
+
+/* Icon trigger for the collection picker (hidden once the session is linked). */
+.tp-choose-btn {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    color: #4361ee;
+    background: rgba(67, 97, 238, 0.1);
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-theme="dark"] .tp-choose-btn {
+    color: #7e93ff;
+}
+
+.tp-choose-btn:hover:not(:disabled) {
+    background: rgba(67, 97, 238, 0.2);
+    box-shadow: 0 0 8px rgba(67, 97, 238, 0.25);
+}
+
+.tp-choose-btn:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 2px;
+}
+
+.tp-choose-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 .tp-collection-name {
     border: 1px solid transparent;
     border-radius: 8px;
@@ -523,6 +574,185 @@ html.performance-mode .tp-pills-refresh--spinning {
     line-height: 1.5;
     opacity: 0.6;
     color: var(--text-color);
+}
+
+/* Text trigger for the collection picker under the empty-state copy. */
+.tp-choose-link {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    padding: 4px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #4361ee;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+
+[data-theme="dark"] .tp-choose-link {
+    color: #7e93ff;
+}
+
+.tp-choose-link:hover:not(:disabled) {
+    text-decoration: underline;
+}
+
+.tp-choose-link:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+.tp-choose-link:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* ── Collection picker (temporarily replaces .tp-groups) ─────────────────── */
+
+.tp-picker {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+/* Same entrance as the group blocks. */
+@media (prefers-reduced-motion: no-preference) {
+    .tp-picker {
+        animation: tp-msg-in 0.3s ease-out both;
+    }
+}
+
+.tp-picker-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.tp-picker-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+.tp-picker-close {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-color);
+    opacity: 0.55;
+    cursor: pointer;
+    line-height: 0;
+    transition: background 0.2s ease, opacity 0.2s ease;
+}
+
+.tp-picker-close:hover {
+    opacity: 1;
+    background: rgba(67, 97, 238, 0.12);
+}
+
+.tp-picker-close:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 1px;
+}
+
+.tp-picker-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 4px;
+    /* Both scrollbar syntaxes (Gecko standard + Blink -webkit). */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(67, 97, 238, 0.35) transparent;
+}
+
+.tp-picker-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tp-picker-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.tp-picker-list::-webkit-scrollbar-thumb {
+    background: rgba(67, 97, 238, 0.35);
+    border-radius: 3px;
+}
+
+.tp-picker-row {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-family: inherit;
+    text-align: left;
+    color: var(--text-color);
+    background: rgba(67, 97, 238, 0.06);
+    cursor: pointer;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-theme="dark"] .tp-picker-row {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tp-picker-row:hover:not(:disabled) {
+    background: rgba(67, 97, 238, 0.14);
+}
+
+.tp-picker-row:focus-visible {
+    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline-offset: 1px;
+}
+
+.tp-picker-row:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+/* The picked row stays full-opacity and pulses while its collection loads. */
+.tp-picker-row--loading:disabled {
+    opacity: 1;
+    background: rgba(67, 97, 238, 0.14);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .tp-picker-row--loading {
+        animation: tp-skeleton-pulse 0.9s ease-in-out infinite alternate;
+    }
+}
+
+.tp-picker-row-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tp-picker-row-count {
+    flex: 0 0 auto;
+    font-size: 11px;
+    opacity: 0.65;
 }
 
 .tp-group {

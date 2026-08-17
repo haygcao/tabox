@@ -2611,6 +2611,21 @@ try {
         tabUid: payload.tabUid,
       }));
     }
+    if (request.type === 'taskPlannerLoadCollection') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerLoadCollection({
+        uid: payload.uid,
+        name: payload.name,
+        groups: payload.groups,
+      }));
+    }
+    if (request.type === 'taskPlannerMarkSaved') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerMarkSaved({
+        uid: payload.uid,
+        name: payload.name,
+      }));
+    }
     if (request.type === 'taskPlannerReset') {
       return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerReset());
     }

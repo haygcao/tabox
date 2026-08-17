@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSetAtom } from 'jotai';
-import { MdClose, MdRefresh, MdSend } from 'react-icons/md';
+import { MdClose, MdFolderOpen, MdRefresh, MdSend } from 'react-icons/md';
 import { BsStars } from 'react-icons/bs';
 import { aiProcessingUidsState } from '../atoms/aiState';
 import TaboxCollection from '../model/TaboxCollection';
 import { applyUid } from '../utils';
-import { loadAllCollections } from '../utils/storageUtils';
+import { loadAllCollections, loadSingleCollection } from '../utils/storageUtils';
+import plannerCore from '../../chrome/task-planner-core';
 import { getColorCode } from '../utils/colorUtils';
 import { FALLBACK_FAVICON } from '../utils/sharedConstants';
 import { showSuccessToast } from '../toastHelpers';
@@ -67,6 +68,15 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     // is in flight (the storage change then drops them from the list for real).
     const [removingTabs, setRemovingTabs] = useState([]);
 
+    // Inline collection picker ("Start from a collection"): while open it
+    // temporarily replaces the .tp-groups area. pickerCollections: null =
+    // metadata still loading, [] = user has no collections.
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [pickerCollections, setPickerCollections] = useState(null);
+    // uid of the row being fetched/loaded into the session (brief per-row
+    // loading state; all rows are disabled while one is in flight).
+    const [pickerLoadingUid, setPickerLoadingUid] = useState(null);
+
     // Editable collection name: seeded from the AI-suggested state value, but
     // once the user touches the field their edits win over later AI updates.
     const [nameDraft, setNameDraft] = useState('');
@@ -85,6 +95,9 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     const messages = session?.messages || [];
     const groups = session?.groups || [];
     const isThinking = session?.status === 'thinking';
+    // Set once the session is linked to a saved collection (after a save, or
+    // after loading one via the picker) — Save becomes an in-place Update.
+    const linkedUid = session?.linkedCollectionUid || null;
     const hasUserMessage = messages.some((m) => m.role === 'user');
     const totalTabs = useMemo(() => groups.reduce((n, g) => n + ((g.tabs || []).length), 0), [groups]);
 
@@ -225,6 +238,8 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         setNameDraft('');
         setInput('');
         setRemovingTabs([]);
+        setPickerOpen(false);
+        setPickerLoadingUid(null);
         prevTabUidsRef.current = null;
     }, []);
 
@@ -251,9 +266,10 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         await startFresh();
     }, [saving, resetLocal, startFresh]);
 
-    // Save flow — same shape as the Smart Organize save: build the collection,
-    // append it through updateRemoteData, toast, flash the new card, then
-    // reset the session for a fresh plan (the modal stays open).
+    // Save flow — build the collection from the session's groups and persist
+    // it through updateRemoteData. The chat is NOT reset: the session stays
+    // linked to the saved collection (taskPlannerMarkSaved / the existing
+    // link), so the user keeps refining and re-saving in place.
     const handleSave = useCallback(async () => {
         if (saving || totalTabs === 0) return;
         setSaving(true);
@@ -269,31 +285,116 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                 active: false,
                 groupId: i + 1,
             })));
-            // applyUid wires tab.uid/group.uid/tab.groupUid so group counts and
-            // future edits behave like any hand-saved collection.
-            const collection = applyUid(new TaboxCollection(name, tabs, chromeGroups));
             const all = await loadAllCollections();
-            await updateRemoteData([...all, collection]);
+            // Linked session → update the collection IN PLACE (same uid, same
+            // spot in the list). A linked-but-deleted collection falls through
+            // to the create path below and re-links to the new uid.
+            const existing = linkedUid ? all.find((c) => c.uid === linkedUid) : null;
+            let flashUid;
+            if (existing) {
+                // applyUid wires tab.uid/group.uid/tab.groupUid so group counts
+                // and future edits behave like any hand-saved collection.
+                let updated = new TaboxCollection(name, tabs, chromeGroups);
+                updated = applyUid(updated);
+                // Preserve identity/metadata from the stored record — only the
+                // name/tabs/groups come from the planner session.
+                updated.uid = existing.uid;
+                updated.parentId = existing.parentId ?? null;
+                updated.color = existing.color;
+                updated.createdOn = existing.createdOn;
+                updated.order = existing.order;
+                updated.isFavorite = existing.isFavorite;
+                updated.favoriteOrder = existing.favoriteOrder;
+                await updateRemoteData(all.map((c) => (c.uid === existing.uid ? updated : c)));
+                showSuccessToast('Collection updated!');
+                flashUid = existing.uid;
+            } else {
+                const collection = applyUid(new TaboxCollection(name, tabs, chromeGroups));
+                await updateRemoteData([...all, collection]);
+                showSuccessToast('Collection saved!');
+                flashUid = collection.uid;
+                // Link the session to the saved collection so the next save
+                // updates it in place (storage.onChanged delivers the linked
+                // state back). Best-effort: the save itself already succeeded.
+                try {
+                    await browser.runtime.sendMessage({
+                        type: 'taskPlannerMarkSaved',
+                        payload: { uid: collection.uid, name },
+                    });
+                } catch (linkError) {
+                    console.error('Task Planner: mark-saved failed', linkError);
+                }
+            }
             if (typeof onDataUpdate === 'function') {
                 Promise.resolve(onDataUpdate()).catch(() => {});
             }
-            showSuccessToast('Collection saved!');
-            // AI flash on the new collection card (aiProcessingUidsState drives
+            // AI flash on the collection card (aiProcessingUidsState drives
             // the shared .ai-processing-overlay on the list card).
-            setAiProcessingUids((prev) => (prev.includes(collection.uid) ? prev : [...prev, collection.uid]));
+            setAiProcessingUids((prev) => (prev.includes(flashUid) ? prev : [...prev, flashUid]));
             if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
             flashTimerRef.current = setTimeout(() => {
-                setAiProcessingUids((prev) => prev.filter((uid) => uid !== collection.uid));
+                setAiProcessingUids((prev) => prev.filter((uid) => uid !== flashUid));
             }, 2500);
-            resetLocal();
-            await startFresh();
         } catch (e) {
             console.error('Task Planner: save failed', e);
             setActionError('Could not save the collection. Please try again.');
         } finally {
             setSaving(false);
         }
-    }, [saving, totalTabs, nameDraft, aiName, groups, updateRemoteData, onDataUpdate, setAiProcessingUids, resetLocal, startFresh]);
+    }, [saving, totalTabs, nameDraft, aiName, groups, linkedUid, updateRemoteData, onDataUpdate, setAiProcessingUids]);
+
+    // ── Choose Collection (start from an existing collection) ───────────────
+    const openPicker = useCallback(async () => {
+        if (isThinking || saving) return;
+        setActionError(null);
+        setPickerOpen(true);
+        setPickerCollections(null);
+        try {
+            const metas = await loadAllCollections({ metadataOnly: true });
+            // Most recently touched first.
+            const sorted = [...(metas || [])].sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
+            setPickerCollections(sorted);
+        } catch (e) {
+            console.error('Task Planner: could not list collections', e);
+            setPickerCollections([]);
+            setActionError('Could not load your collections. Please try again.');
+        }
+    }, [isThinking, saving]);
+
+    const handlePick = useCallback(async (uid) => {
+        if (pickerLoadingUid) return;
+        setActionError(null);
+        setPickerLoadingUid(uid);
+        try {
+            const full = await loadSingleCollection(uid);
+            if (!full) {
+                setActionError('Could not load that collection.');
+                return;
+            }
+            const plannerGroups = plannerCore.collectionToPlannerGroups(full);
+            const res = await browser.runtime.sendMessage({
+                type: 'taskPlannerLoadCollection',
+                payload: { uid, name: full.name, groups: plannerGroups },
+            });
+            if (!res || res.ok === false) {
+                setActionError((res && res.error) || 'Could not load that collection.');
+                return;
+            }
+            if (res.ignored) {
+                // A turn is mid-flight in the SW — nothing was loaded.
+                setActionError('Please wait for the current reply to finish.');
+                return;
+            }
+            // Linked state renders via storage.onChanged (the SW also appends
+            // an assistant bubble announcing the load).
+            setPickerOpen(false);
+        } catch (e) {
+            console.error('Task Planner: load collection failed', e);
+            setActionError('Could not load that collection.');
+        } finally {
+            setPickerLoadingUid(null);
+        }
+    }, [pickerLoadingUid]);
 
     // ── Composer ────────────────────────────────────────────────────────────
     const autogrow = () => {
@@ -432,22 +533,89 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
 
                 <div className="tp-tabs-panel">
                     <div className="tp-tabs-header">
-                        <input
-                            type="text"
-                            className="tp-collection-name"
-                            aria-label="Collection name"
-                            placeholder="Collection name"
-                            value={nameDraft}
-                            onChange={(e) => {
-                                nameTouchedRef.current = true;
-                                setNameDraft(e.target.value);
-                            }}
-                        />
+                        <div className="tp-tabs-header-row">
+                            <input
+                                type="text"
+                                className="tp-collection-name"
+                                aria-label="Collection name"
+                                placeholder="Collection name"
+                                value={nameDraft}
+                                onChange={(e) => {
+                                    nameTouchedRef.current = true;
+                                    setNameDraft(e.target.value);
+                                }}
+                            />
+                            {!linkedUid && (
+                                <button
+                                    type="button"
+                                    className="tp-choose-btn"
+                                    aria-label="Start from a collection"
+                                    data-tooltip-id="main-tooltip"
+                                    data-tooltip-content="Start from a collection"
+                                    data-tooltip-class-name="small-tooltip"
+                                    disabled={isThinking || saving}
+                                    onClick={openPicker}
+                                >
+                                    <MdFolderOpen size={16} />
+                                </button>
+                            )}
+                        </div>
                         <span className="tp-tab-count">{totalTabs} tab{totalTabs === 1 ? '' : 's'}</span>
                     </div>
+                    {pickerOpen ? (
+                        <div className="tp-picker" data-testid="tp-picker">
+                            <div className="tp-picker-header">
+                                <span className="tp-picker-title">Choose a collection</span>
+                                <button
+                                    type="button"
+                                    className="tp-picker-close"
+                                    aria-label="Close collection picker"
+                                    onClick={() => setPickerOpen(false)}
+                                >
+                                    <MdClose size={14} />
+                                </button>
+                            </div>
+                            <div className="tp-picker-list">
+                                {pickerCollections === null && (
+                                    <p className="tp-groups-empty">Loading your collections…</p>
+                                )}
+                                {Array.isArray(pickerCollections) && pickerCollections.length === 0 && (
+                                    <p className="tp-groups-empty">No saved collections yet.</p>
+                                )}
+                                {Array.isArray(pickerCollections) && pickerCollections.map((c) => (
+                                    <button
+                                        type="button"
+                                        key={c.uid}
+                                        className={`tp-picker-row${pickerLoadingUid === c.uid ? ' tp-picker-row--loading' : ''}`}
+                                        disabled={!!pickerLoadingUid}
+                                        onClick={() => handlePick(c.uid)}
+                                    >
+                                        <span className="tp-picker-row-name">{c.name}</span>
+                                        <span className="tp-picker-row-count">
+                                            {pickerLoadingUid === c.uid
+                                                ? 'Loading…'
+                                                : `${c.tabCount || 0} tab${(c.tabCount || 0) === 1 ? '' : 's'}`}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
                     <div className="tp-groups">
                         {groups.length === 0 && (
-                            <p className="tp-groups-empty">Websites the AI gathers for your plan will appear here.</p>
+                            <>
+                                <p className="tp-groups-empty">Websites the AI gathers for your plan will appear here.</p>
+                                {!linkedUid && (
+                                    <button
+                                        type="button"
+                                        className="tp-choose-link"
+                                        disabled={isThinking || saving}
+                                        onClick={openPicker}
+                                    >
+                                        Start from a collection
+                                    </button>
+                                )}
+                            </>
                         )}
                         {groups.map((g, gi) => (
                             <div
@@ -490,6 +658,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                             </div>
                         ))}
                     </div>
+                    )}
                     <div className="tp-tabs-footer">
                         {actionError && <div className="tp-error">{actionError}</div>}
                         <button
@@ -502,7 +671,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                             disabled={totalTabs === 0 || saving || isThinking || removingTabs.length > 0}
                         >
                             <BsStars size={14} style={{ marginRight: '6px' }} />
-                            {saving ? 'Saving…' : 'Save collection'}
+                            {saving ? 'Saving…' : (linkedUid ? 'Update collection' : 'Save collection')}
                         </button>
                         <button
                             type="button"

@@ -277,6 +277,52 @@ function normalizeTurn(raw, prevGroups = []) {
     return { reply, collectionName, groups };
 }
 
+/**
+ * Convert a stored Tabox collection record into planner groups so an existing
+ * collection can seed (link into) a planner session. Pure projection:
+ * - one planner group per chromeGroup (uid preserved when present, title
+ *   sanitized like prompt data, invalid colors coerced to 'grey');
+ * - tabs attach to their group via tab.groupUid; tabs with no/unknown
+ *   groupUid land in a trailing "More tabs" group (only when non-empty);
+ * - non-http(s)/malformed URLs are dropped, tab titles fall back to the
+ *   hostname (like normalizeTurn), tab uids are preserved or minted;
+ * - empty groups are dropped. NO capping here — the session-side
+ *   normalizeTurn clamps to MAX_GROUPS/MAX_TABS.
+ * @param {object} collection - Stored record { tabs: [...], chromeGroups: [...] }.
+ * @returns {Array} planner groups [{ uid, title, color, tabs: [{ uid, title, url }] }]
+ */
+function collectionToPlannerGroups(collection) {
+    const chromeGroups = (collection && Array.isArray(collection.chromeGroups)) ? collection.chromeGroups : [];
+    const rawTabs = (collection && Array.isArray(collection.tabs)) ? collection.tabs : [];
+
+    const groupList = chromeGroups.map((g) => ({
+        uid: (g && g.uid) || mintUid(),
+        title: sanitizeForPrompt(g && g.title, MAX_GROUP_TITLE) || 'Group',
+        color: GROUP_COLORS.includes(g && g.color) ? g.color : 'grey',
+        tabs: [],
+    }));
+    // Attach tabs by the ORIGINAL chromeGroup uid (a group without one can
+    // never be referenced by tab.groupUid — its tabs fall through below).
+    const groupByUid = new Map();
+    chromeGroups.forEach((g, i) => {
+        if (g && g.uid && !groupByUid.has(g.uid)) groupByUid.set(g.uid, groupList[i]);
+    });
+    const ungrouped = { uid: mintUid(), title: 'More tabs', color: 'grey', tabs: [] };
+
+    for (const t of rawTabs) {
+        const url = t && typeof t.url === 'string' ? t.url.trim() : '';
+        if (!isValidHttpUrl(url)) continue;
+        let title;
+        try { title = String((t.title || '')).trim() || new URL(url).hostname.replace(/^www\./, ''); } catch { title = url; }
+        const target = (t.groupUid && groupByUid.get(t.groupUid)) || ungrouped;
+        target.tabs.push({ uid: t.uid || mintUid(), title, url });
+    }
+
+    const groups = groupList.filter((g) => g.tabs.length > 0);
+    if (ungrouped.tabs.length > 0) groups.push(ungrouped);
+    return groups;
+}
+
 // Windowed chat history: the last `max` display messages, projected to the
 // { role, content } shape the Worker accepts. The current tab set rides in the
 // system prompt, so dropping old turns loses nothing structural.
@@ -340,6 +386,7 @@ const taskPlannerCoreApi = {
     buildPlannerSystemPrompt,
     buildPillsPrompt,
     normalizeTurn,
+    collectionToPlannerGroups,
     windowHistory,
     normalizePills,
     parseJSONContent,

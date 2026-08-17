@@ -38,6 +38,7 @@ async function seedSession(overrides = {}) {
         messages: [],
         groups: [],
         collectionName: '',
+        linkedCollectionUid: null,
         error: null,
         createdAt: now,
         updatedAt: now,
@@ -66,6 +67,7 @@ describe('taskPlannerStart', () => {
         expect(s.messages).toEqual([]);
         expect(s.groups).toEqual([]);
         expect(s.collectionName).toBe('');
+        expect(s.linkedCollectionUid).toBeNull();
         expect(s.error).toBeNull();
         expect(typeof s.createdAt).toBe('number');
         expect(typeof s.updatedAt).toBe('number');
@@ -514,6 +516,162 @@ describe('taskPlannerSend', () => {
         const res = await sendA;
         expect(res.ok).toBe(true);
         expect((await readStored()).status).toBe('ready');
+    });
+});
+
+describe('taskPlannerLoadCollection', () => {
+    const loadedGroups = () => ([
+        { uid: 'g-1', title: 'Reading', color: 'blue', tabs: [
+            { uid: 't-1', title: 'MDN', url: 'https://developer.mozilla.org' },
+            { uid: 't-2', title: 'Spec', url: 'https://spec.example.com' },
+        ] },
+        { uid: 'g-2', title: 'Videos', color: 'red', tabs: [
+            { uid: 't-3', title: 'Talks', url: 'https://talks.example.com' },
+        ] },
+    ]);
+
+    test('happy path: links the session, normalizes groups with uids preserved, announces counts', async () => {
+        await seedSession({ collectionName: 'Old Name', error: 'stale error', status: 'error' });
+        const res = await planner.taskPlannerLoadCollection({ uid: 'col-1', name: 'Web Dev Research', groups: loadedGroups() });
+        expect(res.ok).toBe(true);
+        expect(res.ignored).toBeUndefined();
+        const s = res.state;
+        expect(s.status).toBe('ready');
+        expect(s.error).toBeNull();
+        expect(s.linkedCollectionUid).toBe('col-1');
+        expect(s.collectionName).toBe('Web Dev Research');
+        // Normalized through normalizeTurn with the incoming groups as
+        // prevGroups — group AND tab uids survive.
+        expect(s.groups.map((g) => g.uid)).toEqual(['g-1', 'g-2']);
+        expect(s.groups[0].tabs.map((t) => t.uid)).toEqual(['t-1', 't-2']);
+        expect(s.groups[1].tabs.map((t) => t.uid)).toEqual(['t-3']);
+        // ONE assistant announcement with correct counts and pluralization.
+        expect(s.messages).toHaveLength(1);
+        expect(s.messages[0]).toMatchObject({
+            role: 'assistant',
+            content: 'Loaded "Web Dev Research" — 3 tabs in 2 groups. Tell me what you\'d like to add or change!',
+        });
+        expect(s.messages[0].id).toBeTruthy();
+        expect(typeof s.messages[0].ts).toBe('number');
+        expect(await readStored()).toEqual(s);
+    });
+
+    test('singular pluralization: 1 tab in 1 group', async () => {
+        await seedSession();
+        const res = await planner.taskPlannerLoadCollection({
+            uid: 'col-2',
+            name: 'Tiny',
+            groups: [{ uid: 'g-1', title: 'Only', color: 'blue', tabs: [{ uid: 't-1', title: 'One', url: 'https://one.com' }] }],
+        });
+        expect(res.state.messages[0].content).toBe('Loaded "Tiny" — 1 tab in 1 group. Tell me what you\'d like to add or change!');
+    });
+
+    test('clamps the collection name and drops invalid tabs before counting', async () => {
+        await seedSession();
+        const res = await planner.taskPlannerLoadCollection({
+            uid: 'col-3',
+            name: 'n'.repeat(200),
+            groups: [{ uid: 'g-1', title: 'Mixed', color: 'blue', tabs: [
+                { uid: 't-1', title: 'Good', url: 'https://good.com' },
+                { uid: 't-2', title: 'Bad', url: 'chrome://settings' },
+            ] }],
+        });
+        expect(res.state.collectionName).toHaveLength(core.MAX_COLLECTION_NAME);
+        expect(res.state.groups[0].tabs.map((t) => t.url)).toEqual(['https://good.com']);
+        expect(res.state.messages[0].content).toContain('1 tab in 1 group');
+    });
+
+    test('appends to an existing transcript, capped at MAX_STORED_MESSAGES', async () => {
+        const messages = Array.from({ length: core.MAX_STORED_MESSAGES }, (_, i) => (
+            { id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }
+        ));
+        await seedSession({ messages });
+        const res = await planner.taskPlannerLoadCollection({ uid: 'col-4', name: 'Full', groups: loadedGroups() });
+        expect(res.state.messages).toHaveLength(core.MAX_STORED_MESSAGES);
+        expect(res.state.messages[res.state.messages.length - 1].content).toMatch(/^Loaded "Full"/);
+        expect(res.state.messages.map((m) => m.content)).not.toContain('msg 0');
+    });
+
+    test('is ignored while a turn is thinking — no mutation', async () => {
+        const thinking = await seedSession({ status: 'thinking' });
+        const res = await planner.taskPlannerLoadCollection({ uid: 'col-5', name: 'Nope', groups: loadedGroups() });
+        expect(res.ok).toBe(true);
+        expect(res.ignored).toBe(true);
+        expect(res.state).toEqual(thinking);
+        const stored = await readStored();
+        expect(stored.linkedCollectionUid).toBeNull();
+        expect(stored.groups).toEqual([]);
+        expect(stored.messages).toEqual([]);
+    });
+
+    test('errors cleanly with no session', async () => {
+        const res = await planner.taskPlannerLoadCollection({ uid: 'col-6', name: 'X', groups: [] });
+        expect(res.ok).toBe(false);
+        expect(res.error).toMatch(/no active planner session/i);
+    });
+});
+
+describe('taskPlannerMarkSaved', () => {
+    test('links the session to the saved collection and adopts the final name', async () => {
+        await seedSession({ collectionName: 'Draft name' });
+        const before = (await readStored()).updatedAt;
+        const res = await planner.taskPlannerMarkSaved({ uid: 'col-9', name: 'Saved Name' });
+        expect(res.ok).toBe(true);
+        expect(res.state.linkedCollectionUid).toBe('col-9');
+        expect(res.state.collectionName).toBe('Saved Name');
+        expect(res.state.updatedAt).toBeGreaterThanOrEqual(before);
+        expect(await readStored()).toEqual(res.state);
+    });
+
+    test('keeps the existing name when none is given, and clamps a long one', async () => {
+        await seedSession({ collectionName: 'Existing' });
+        const res = await planner.taskPlannerMarkSaved({ uid: 'col-10' });
+        expect(res.state.collectionName).toBe('Existing');
+        expect(res.state.linkedCollectionUid).toBe('col-10');
+        const res2 = await planner.taskPlannerMarkSaved({ uid: 'col-11', name: 'n'.repeat(200) });
+        expect(res2.state.collectionName).toHaveLength(50);
+    });
+
+    test('errors cleanly with no session', async () => {
+        const res = await planner.taskPlannerMarkSaved({ uid: 'col-12' });
+        expect(res.ok).toBe(false);
+        expect(res.error).toMatch(/no active planner session/i);
+    });
+});
+
+describe('linkedCollectionUid persistence across mutations', () => {
+    test('send preserves the link through thinking and landing', async () => {
+        mockAI(async () => turnJSON());
+        await seedSession({ linkedCollectionUid: 'col-1' });
+        const res = await planner.taskPlannerSend({ text: 'add more' });
+        expect(res.ok).toBe(true);
+        expect(res.state.linkedCollectionUid).toBe('col-1');
+    });
+
+    test('a failed send preserves the link on the error state', async () => {
+        mockAI(async () => { throw new Error('boom'); });
+        await seedSession({ linkedCollectionUid: 'col-1' });
+        await planner.taskPlannerSend({ text: 'add more' });
+        expect((await readStored()).linkedCollectionUid).toBe('col-1');
+    });
+
+    test('removeTab preserves the link', async () => {
+        await seedSession({
+            linkedCollectionUid: 'col-1',
+            groups: [{ uid: 'g-1', title: 'A', color: 'blue', tabs: [
+                { uid: 't-1', title: '1', url: 'https://1.com' },
+                { uid: 't-2', title: '2', url: 'https://2.com' },
+            ] }],
+        });
+        const res = await planner.taskPlannerRemoveTab({ groupUid: 'g-1', tabUid: 't-1' });
+        expect(res.state.linkedCollectionUid).toBe('col-1');
+    });
+
+    test('reset clears everything, link included', async () => {
+        await seedSession({ linkedCollectionUid: 'col-1' });
+        const res = await planner.taskPlannerReset();
+        expect(res).toEqual({ ok: true, state: null });
+        expect(await readStored()).toBeUndefined();
     });
 });
 

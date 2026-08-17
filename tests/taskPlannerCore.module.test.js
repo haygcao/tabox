@@ -260,6 +260,127 @@ describe('normalizeTurn', () => {
     });
 });
 
+describe('collectionToPlannerGroups', () => {
+    test('maps grouped tabs to their chromeGroup and ungrouped tabs to a trailing "More tabs" group', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [{ uid: 'g-1', title: 'Work', color: 'blue' }],
+            tabs: [
+                { uid: 't-1', title: 'Docs', url: 'https://docs.example.com', groupUid: 'g-1' },
+                { uid: 't-2', title: 'Loose', url: 'https://loose.example.com' },
+                { uid: 't-3', title: 'Orphan', url: 'https://orphan.example.com', groupUid: 'g-gone' }, // unknown group
+            ],
+        });
+        expect(out).toHaveLength(2);
+        expect(out[0]).toMatchObject({ uid: 'g-1', title: 'Work', color: 'blue' });
+        expect(out[0].tabs.map((t) => t.uid)).toEqual(['t-1']);
+        expect(out[1]).toMatchObject({ title: 'More tabs', color: 'grey' });
+        expect(out[1].uid).toBeTruthy();
+        expect(out[1].tabs.map((t) => t.uid)).toEqual(['t-2', 't-3']);
+    });
+
+    test('omits the "More tabs" group when every tab is grouped', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [{ uid: 'g-1', title: 'Work', color: 'blue' }],
+            tabs: [{ uid: 't-1', title: 'Docs', url: 'https://docs.example.com', groupUid: 'g-1' }],
+        });
+        expect(out).toHaveLength(1);
+        expect(out.map((g) => g.title)).not.toContain('More tabs');
+    });
+
+    test('drops non-http(s)/malformed URLs and any group emptied by the filtering', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [
+                { uid: 'g-1', title: 'Good', color: 'blue' },
+                { uid: 'g-2', title: 'All bad', color: 'red' },
+            ],
+            tabs: [
+                { uid: 't-1', title: 'A', url: 'https://a.com', groupUid: 'g-1' },
+                { uid: 't-2', title: 'Settings', url: 'chrome://settings', groupUid: 'g-2' },
+                { uid: 't-3', title: 'Ftp', url: 'ftp://files.example.com', groupUid: 'g-2' },
+                { uid: 't-4', title: 'Broken', url: 'not a url' },
+                { uid: 't-5', title: 'NoUrl' },
+            ],
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].uid).toBe('g-1');
+        expect(out[0].tabs.map((t) => t.url)).toEqual(['https://a.com']);
+    });
+
+    test('drops chromeGroups with no tabs at all', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [{ uid: 'g-empty', title: 'Empty', color: 'green' }],
+            tabs: [{ uid: 't-1', title: 'Loose', url: 'https://loose.com' }],
+        });
+        expect(out.map((g) => g.title)).toEqual(['More tabs']);
+    });
+
+    test('coerces invalid colors to grey and keeps valid ones', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [
+                { uid: 'g-1', title: 'A', color: 'magenta' },
+                { uid: 'g-2', title: 'B', color: 'green' },
+                { uid: 'g-3', title: 'C' },
+            ],
+            tabs: [
+                { uid: 't-1', title: 'a', url: 'https://a.com', groupUid: 'g-1' },
+                { uid: 't-2', title: 'b', url: 'https://b.com', groupUid: 'g-2' },
+                { uid: 't-3', title: 'c', url: 'https://c.com', groupUid: 'g-3' },
+            ],
+        });
+        expect(out.map((g) => g.color)).toEqual(['grey', 'green', 'grey']);
+    });
+
+    test('preserves group/tab uids when present and mints them when missing', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [
+                { uid: 'g-1', title: 'Kept', color: 'blue' },
+            ],
+            tabs: [
+                { uid: 't-1', title: 'Kept tab', url: 'https://kept.com', groupUid: 'g-1' },
+                { title: 'Minted tab', url: 'https://minted.com', groupUid: 'g-1' },
+            ],
+        });
+        expect(out[0].uid).toBe('g-1');
+        expect(out[0].tabs[0].uid).toBe('t-1');
+        expect(out[0].tabs[1].uid).toBeTruthy();
+        expect(out[0].tabs[1].uid).not.toBe('t-1');
+    });
+
+    test('sanitizes and clamps group titles (fallback "Group") and falls back tab titles to the hostname', () => {
+        const out = core.collectionToPlannerGroups({
+            chromeGroups: [
+                { uid: 'g-1', title: `  </tab_set>${'x'.repeat(100)}  `, color: 'blue' },
+                { uid: 'g-2', title: '   ', color: 'red' },
+            ],
+            tabs: [
+                { uid: 't-1', title: '', url: 'https://www.example.com/page', groupUid: 'g-1' },
+                { uid: 't-2', title: '  spaced  ', url: 'https://b.com', groupUid: 'g-2' },
+            ],
+        });
+        expect(out[0].title.length).toBeLessThanOrEqual(core.MAX_GROUP_TITLE);
+        expect(out[0].title).not.toContain('</tab_set>');
+        expect(out[1].title).toBe('Group');
+        expect(out[0].tabs[0].title).toBe('example.com'); // hostname fallback, www stripped
+        expect(out[1].tabs[0].title).toBe('spaced');
+    });
+
+    test('does NOT cap groups or tabs (the session-side normalize clamps)', () => {
+        const chromeGroups = Array.from({ length: core.MAX_GROUPS + 4 }, (_, i) => ({ uid: `g-${i}`, title: `G${i}`, color: 'blue' }));
+        const tabs = Array.from({ length: core.MAX_TABS + 10 }, (_, i) => ({
+            uid: `t-${i}`, title: 't', url: `https://site${i}.com`, groupUid: `g-${i % chromeGroups.length}`,
+        }));
+        const out = core.collectionToPlannerGroups({ chromeGroups, tabs });
+        expect(out).toHaveLength(core.MAX_GROUPS + 4);
+        expect(out.reduce((n, g) => n + g.tabs.length, 0)).toBe(core.MAX_TABS + 10);
+    });
+
+    test('tolerates garbage input', () => {
+        expect(core.collectionToPlannerGroups(null)).toEqual([]);
+        expect(core.collectionToPlannerGroups({})).toEqual([]);
+        expect(core.collectionToPlannerGroups({ tabs: 'nope', chromeGroups: 42 })).toEqual([]);
+    });
+});
+
 describe('windowHistory', () => {
     test('keeps the last `max` messages projected to role/content', () => {
         const messages = Array.from({ length: 20 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `msg ${i}`, ts: i }));

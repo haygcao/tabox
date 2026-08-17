@@ -1,5 +1,5 @@
 import { test, expect } from 'crxbox';
-import { buildSeed, seedStorage } from './support/fixtures.mjs';
+import { buildSeed, seedStorage, tab } from './support/fixtures.mjs';
 
 // Task Planner end-to-end smoke: real popup UI ↔ real SW handlers ↔ real
 // storage, with only the AI network call stubbed (globalThis.TaboxAIClient is
@@ -120,8 +120,80 @@ test('plan a trip end-to-end: greeting, pills, turn, remove, save', async ({ ext
   // Every tab must be wired to its group (groupUid drives rendering + counts).
   expect(saved.tabs.every((t) => !!t.groupUid)).toBe(true);
 
-  // Post-save the panel resets to a fresh session.
-  await expect(popup.locator('.tp-tab')).toHaveCount(0);
+  // Post-save the chat does NOT reset: the transcript and tab set survive and
+  // the session is linked to the saved collection — the footer flips to Update.
+  await expect(popup.locator('.tp-bubble', { hasText: 'starter set for your Japan trip' })).toBeVisible();
+  await expect(popup.locator('.tp-tab')).toHaveCount(2);
+  await expect(popup.locator('.tp-save-btn')).toHaveText(/Update collection/);
+
+  // Keep refining: another turn re-lands the full stubbed set (3 tabs)…
+  await popup.locator('.tp-input').fill('Add back the flight comparison site');
+  await popup.locator('.tp-input').press('Enter');
+  await expect(popup.locator('.tp-tab')).toHaveCount(3);
+
+  // …and Update collection rewrites the SAME collection in place: still
+  // exactly one 'Japan Trip', now carrying the turn's 3 tabs.
+  await popup.locator('.tp-save-btn').click();
+  await expect
+    .poll(() => ext.background.evaluate(async () => {
+      const { collections_index: index = {} } = await browser.storage.local.get('collections_index');
+      const uids = Object.keys(index).filter((k) => index[k].name === 'Japan Trip');
+      if (uids.length !== 1) return { count: uids.length, tabCount: 0 };
+      const rec = (await browser.storage.local.get(`collection_${uids[0]}`))[`collection_${uids[0]}`];
+      return { count: 1, tabCount: rec ? rec.tabs.length : 0 };
+    }))
+    .toEqual({ count: 1, tabCount: 3 });
+
+  const updated = await ext.background.evaluate(async () => {
+    const { collections_index: index = {} } = await browser.storage.local.get('collections_index');
+    const uid = Object.keys(index).find((k) => index[k].name === 'Japan Trip');
+    return (await browser.storage.local.get(`collection_${uid}`))[`collection_${uid}`];
+  });
+  // Tabs match the stubbed turn (Flights ×2 then Stay ×1).
+  expect(updated.tabs.map((t) => t.url)).toEqual([
+    'https://www.google.com/travel/flights',
+    'https://www.skyscanner.com',
+    'https://www.booking.com',
+  ]);
+  // Same collection record, not a replacement: the uid of the first save survived.
+  expect(updated.uid).toBe(saved.uid);
+});
+
+test('choose collection loads an existing collection into the planner and links it', async ({ ext }) => {
+  const seeded = {
+    uid: 'cg',
+    name: 'Research Stack',
+    tabs: [
+      tab('alpha', 'Alpha', { groupUid: 'g1', groupId: 1 }),
+      tab('beta', 'Beta', { groupUid: 'g1', groupId: 1 }),
+      tab('gamma', 'Gamma'),
+    ],
+    chromeGroups: [{ id: 1, uid: 'g1', title: 'Sources', color: 'blue', collapsed: false }],
+  };
+  await seedStorage(ext, { ...buildSeed({ collections: [seeded, ...SEED.collections] }), ...proSeed() });
+  await stubChat(ext);
+
+  const popup = await ext.popup.open();
+  await openPlanner(popup);
+  await expect(popup.locator('.tp-bubble').first()).toContainText("I'm your Tabox planner");
+
+  // Open the picker from the header icon and pick the seeded collection.
+  await popup.locator('.tp-choose-btn').click();
+  await expect(popup.locator('.tp-picker-title')).toHaveText('Choose a collection');
+  await popup.locator('.tp-picker-row', { hasText: 'Research Stack' }).click();
+
+  // Its groups/tabs land in the tabs panel: the real chrome group plus a
+  // "More tabs" bucket for the ungrouped tab.
+  await expect(popup.locator('.tp-group', { hasText: 'Sources' })).toBeVisible();
+  await expect(popup.locator('.tp-group', { hasText: 'More tabs' })).toBeVisible();
+  await expect(popup.locator('.tp-tab')).toHaveCount(3);
+  await expect(popup.locator('.tp-collection-name')).toHaveValue('Research Stack');
+
+  // The SW announces the load in the transcript and the session is linked.
+  await expect(popup.locator('.tp-bubble', { hasText: 'Loaded "Research Stack"' })).toBeVisible();
+  await expect(popup.locator('.tp-save-btn')).toHaveText(/Update collection/);
+  // Linked sessions hide the picker triggers.
+  await expect(popup.locator('.tp-choose-btn')).toHaveCount(0);
 });
 
 test('session survives popup close and reattaches', async ({ ext }) => {
