@@ -8,7 +8,8 @@ import { isProState } from '../atoms/premiumState';
 import ProBadge from '../ProBadge';
 import TaboxCollection from '../model/TaboxCollection';
 import { applyUid } from '../utils';
-import { loadAllCollections, loadSingleCollection } from '../utils/storageUtils';
+import { loadAllCollections, loadAllFolders, loadSingleCollection } from '../utils/storageUtils';
+import { moveCollectionToFolder } from '../utils/folderOperations';
 import plannerCore from '../../chrome/task-planner-core';
 import { getColorCode } from '../utils/colorUtils';
 import { FALLBACK_FAVICON } from '../utils/sharedConstants';
@@ -117,6 +118,14 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     // uid of the row being fetched/loaded into the session (brief per-row
     // loading state; all rows are disabled while one is in flight).
     const [pickerLoadingUid, setPickerLoadingUid] = useState(null);
+
+    // Inline folder picker ("Add to folder" offer chip): mirrors the
+    // collection picker above and is mutually exclusive with it.
+    // folderList: null = loading, [] = user has no folders.
+    const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+    const [folderList, setFolderList] = useState(null);
+    // uid of the folder a move is in flight to (all rows disabled meanwhile).
+    const [folderMovingUid, setFolderMovingUid] = useState(null);
 
     // Editable collection name: seeded from the AI-suggested state value, but
     // once the user touches the field their edits win over later AI updates.
@@ -402,6 +411,9 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         setRemovingTabs([]);
         setPickerOpen(false);
         setPickerLoadingUid(null);
+        setFolderPickerOpen(false);
+        setFolderList(null);
+        setFolderMovingUid(null);
         prevGroupsRef.current = null;
         prevSessionIdRef.current = null;
         setDisplayGroups([]);
@@ -525,13 +537,55 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         }
     }, [linkedUid, setShareCollectionLink]);
 
-    // Placeholder — replaced by the folder picker (next commit).
-    const openFolderPicker = useCallback(() => {}, []);
+    // ── Add to folder (offer chip) ──────────────────────────────────────────
+    const openFolderPicker = useCallback(async () => {
+        setActionError(null);
+        setPickerOpen(false); // mutually exclusive with the collection picker
+        setFolderPickerOpen(true);
+        setFolderList(null);
+        try {
+            const folders = await loadAllFolders({ metadataOnly: true });
+            setFolderList(folders || []);
+        } catch (e) {
+            console.error('Task Planner: could not list folders', e);
+            setFolderList([]);
+            setActionError('Could not load your folders. Please try again.');
+        }
+    }, []);
+
+    // Move the linked collection into the picked folder. moveCollectionToFolder
+    // does its own read-only shared-folder check ({ blocked: true }) and syncs
+    // folder counts — the panel only refreshes the UI and reports the outcome.
+    const handleFolderPick = useCallback(async (folder) => {
+        if (folderMovingUid || !linkedUid) return;
+        setActionError(null);
+        setFolderMovingUid(folder.uid);
+        try {
+            const res = await moveCollectionToFolder(linkedUid, folder.uid);
+            if (res === true) {
+                if (typeof onDataUpdate === 'function') {
+                    await Promise.resolve(onDataUpdate()).catch(() => {});
+                }
+                showSuccessToast(`Moved "${(nameDraft || aiName || 'collection').trim()}" to ${folder.name}`);
+                setFolderPickerOpen(false);
+            } else if (res && res.blocked) {
+                setActionError("This folder is shared read-only — you can't move collections into it.");
+            } else {
+                setActionError('Could not move the collection. Please try again.');
+            }
+        } catch (e) {
+            console.error('Task Planner: move to folder failed', e);
+            setActionError('Could not move the collection. Please try again.');
+        } finally {
+            setFolderMovingUid(null);
+        }
+    }, [folderMovingUid, linkedUid, onDataUpdate, nameDraft, aiName]);
 
     // ── Choose Collection (start from an existing collection) ───────────────
     const openPicker = useCallback(async () => {
         if (isThinking || saving) return;
         setActionError(null);
+        setFolderPickerOpen(false); // mutually exclusive with the folder picker
         setPickerOpen(true);
         setPickerCollections(null);
         try {
@@ -805,6 +859,42 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                                                 ? 'Loading…'
                                                 : `${c.tabCount || 0} tab${(c.tabCount || 0) === 1 ? '' : 's'}`}
                                         </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ) : folderPickerOpen ? (
+                        <div className="tp-picker" data-testid="tp-folder-picker">
+                            <div className="tp-picker-header">
+                                <span className="tp-picker-title">Add to folder</span>
+                                <button
+                                    type="button"
+                                    className="tp-picker-close"
+                                    aria-label="Close folder picker"
+                                    onClick={() => setFolderPickerOpen(false)}
+                                >
+                                    <MdClose size={14} />
+                                </button>
+                            </div>
+                            <div className="tp-picker-list">
+                                {folderList === null && (
+                                    <p className="tp-groups-empty">Loading your folders…</p>
+                                )}
+                                {Array.isArray(folderList) && folderList.length === 0 && (
+                                    <p className="tp-groups-empty">No folders yet.</p>
+                                )}
+                                {Array.isArray(folderList) && folderList.map((f) => (
+                                    <button
+                                        type="button"
+                                        key={f.uid}
+                                        className={`tp-picker-row${folderMovingUid === f.uid ? ' tp-picker-row--loading' : ''}`}
+                                        disabled={!!folderMovingUid}
+                                        onClick={() => handleFolderPick(f)}
+                                    >
+                                        <span className="tp-picker-row-name">{f.name}</span>
+                                        {folderMovingUid === f.uid && (
+                                            <span className="tp-picker-row-count">Moving…</span>
+                                        )}
                                     </button>
                                 ))}
                             </div>

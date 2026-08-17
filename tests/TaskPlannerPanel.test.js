@@ -6,11 +6,14 @@ import { Provider, createStore } from 'jotai';
 jest.mock('../app/utils/storageUtils', () => ({
     loadAllCollections: jest.fn().mockResolvedValue([]),
     loadSingleCollection: jest.fn().mockResolvedValue(null),
+    loadAllFolders: jest.fn().mockResolvedValue([]),
 }));
+jest.mock('../app/utils/folderOperations', () => ({ moveCollectionToFolder: jest.fn() }));
 jest.mock('../app/toastHelpers', () => ({ showUndoToast: jest.fn(), showSuccessToast: jest.fn() }));
 
 import TaskPlannerPanel from '../app/ai/TaskPlannerPanel';
-import { loadAllCollections, loadSingleCollection } from '../app/utils/storageUtils';
+import { loadAllCollections, loadSingleCollection, loadAllFolders } from '../app/utils/storageUtils';
+import { moveCollectionToFolder } from '../app/utils/folderOperations';
 import { shareCollectionLinkModalState } from '../app/atoms/sharedFoldersState';
 import { showSuccessToast } from '../app/toastHelpers';
 import { browser } from '../static/globals';
@@ -699,5 +702,92 @@ describe('offer chips', () => {
 
         expect(screen.getByRole('button', { name: /Share via link/ })).toBeDisabled();
         expect(screen.getByRole('button', { name: /Add to folder/ })).toBeDisabled();
+    });
+});
+
+describe('add to folder picker', () => {
+    const openOfferPicker = async () => {
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /Add to folder/ }));
+        });
+    };
+
+    test('folder chip opens a picker listing folders', async () => {
+        loadAllFolders.mockResolvedValue([{ uid: 'f1', name: 'Work' }, { uid: 'f2', name: 'Travel' }]);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        await renderPanel();
+        await openOfferPicker();
+
+        expect(loadAllFolders).toHaveBeenCalledWith({ metadataOnly: true });
+        expect(screen.getByTestId('tp-folder-picker')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Work/ })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /Travel/ })).toBeInTheDocument();
+    });
+
+    test('shows an empty state when there are no folders', async () => {
+        loadAllFolders.mockResolvedValue([]);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        await renderPanel();
+        await openOfferPicker();
+
+        expect(screen.getByText('No folders yet.')).toBeInTheDocument();
+    });
+
+    test('picking a folder moves the collection, refreshes, and toasts', async () => {
+        loadAllFolders.mockResolvedValue([{ uid: 'f2', name: 'Travel' }]);
+        moveCollectionToFolder.mockResolvedValue(true);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        const { onDataUpdate } = await renderPanel();
+        await openOfferPicker();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /Travel/ }));
+        });
+
+        expect(moveCollectionToFolder).toHaveBeenCalledWith('col-1', 'f2');
+        expect(onDataUpdate).toHaveBeenCalled();
+        expect(showSuccessToast).toHaveBeenCalledWith('Moved "Trip" to Travel');
+        expect(screen.queryByTestId('tp-folder-picker')).not.toBeInTheDocument();
+    });
+
+    test('surfaces blocked moves as an error and keeps the picker open', async () => {
+        loadAllFolders.mockResolvedValue([{ uid: 'f3', name: 'Shared' }]);
+        moveCollectionToFolder.mockResolvedValue({ blocked: true });
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        await renderPanel();
+        await openOfferPicker();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /Shared/ }));
+        });
+
+        expect(screen.getByText(/read-only/)).toBeInTheDocument();
+        expect(screen.getByTestId('tp-folder-picker')).toBeInTheDocument();
+    });
+
+    test('surfaces a failed move as an error', async () => {
+        loadAllFolders.mockResolvedValue([{ uid: 'f1', name: 'Work' }]);
+        moveCollectionToFolder.mockResolvedValue(false);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        await renderPanel();
+        await openOfferPicker();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: /Work/ }));
+        });
+
+        expect(screen.getByText(/Could not move the collection/)).toBeInTheDocument();
+    });
+
+    test('the picker can be closed without picking', async () => {
+        loadAllFolders.mockResolvedValue([{ uid: 'f1', name: 'Work' }]);
+        mockMessages({ taskPlannerStart: () => ({ ok: true, state: OFFER_SESSION() }) });
+        await renderPanel();
+        await openOfferPicker();
+
+        await act(async () => {
+            fireEvent.click(screen.getByRole('button', { name: 'Close folder picker' }));
+        });
+        expect(screen.queryByTestId('tp-folder-picker')).not.toBeInTheDocument();
     });
 });
