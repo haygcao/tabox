@@ -25,15 +25,15 @@ describe('decideEntitlement', () => {
     expect(r.cancelAt).toBe('2026-08-01T00:00:00Z');
   });
 
-  it('entitles past_due within 14 days of period end', () => {
-    const periodEnd = new Date(NOW - 5 * DAY).toISOString();
+  it('entitles past_due within 3 days of period end', () => {
+    const periodEnd = new Date(NOW - 2 * DAY).toISOString();
     const r = decideEntitlement({ status: 'past_due', plan: 'annual', current_period_end: periodEnd }, NOW);
     expect(r.entitled).toBe(true);
     expect(Date.parse(r.expiresAt)).toBe(Date.parse(periodEnd) + PAST_DUE_GRACE_MS);
   });
 
   it('rejects past_due beyond the grace window', () => {
-    const periodEnd = new Date(NOW - 15 * DAY).toISOString();
+    const periodEnd = new Date(NOW - 4 * DAY).toISOString();
     expect(decideEntitlement({ status: 'past_due', plan: 'annual', current_period_end: periodEnd }, NOW).entitled).toBe(false);
   });
 

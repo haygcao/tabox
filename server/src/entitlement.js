@@ -1,4 +1,4 @@
-export const PAST_DUE_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
+export const PAST_DUE_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
 
 export function decideEntitlement(record, nowMs = Date.now()) {
   if (!record || !record.status) {
