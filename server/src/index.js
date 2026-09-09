@@ -24,6 +24,7 @@ import {
 } from './shareLinks.js';
 import { JOIN_PAGE_HTML } from './joinPage.js';
 import { validateAIRequest, completeAI } from './aiProxy.js';
+import { recordAIUsage } from './aiUsage.js';
 import { validateUrlsRequest, checkUrls } from './urlValidator.js';
 import { handlePushSubscribe, handlePushUnsubscribe } from './pushRoutes.js';
 import { notifyEmails, notifyFolderMembers } from './pushNotify.js';
@@ -60,6 +61,7 @@ async function handleEntitlement(request, env) {
       record = null;
     }
   }
+  if (!record) record = await reconcileEntitlement(env, identity.googleId);
   const decision = decideEntitlement(record);
   const token = decision.entitled
     ? await signEntitlementToken({ sub: identity.googleId, ent: decision.status, plan: decision.plan }, env.JWT_SECRET)
@@ -89,16 +91,18 @@ async function handlePaddleWebhook(request, env) {
     const link = extractTransactionLink(event);
     if (link) {
       await env.ENTITLEMENTS.put(`map:${link.subscription_id}`, JSON.stringify({ googleId: link.googleId }));
-      const pendingRaw = await env.ENTITLEMENTS.get(`subpending:${link.subscription_id}`);
-      if (pendingRaw) {
-        await applyEntitlement(env, link.googleId, JSON.parse(pendingRaw).record);
-        await env.ENTITLEMENTS.delete(`subpending:${link.subscription_id}`);
-      }
+      // Reverse index: lets an entitlement read find the parked record when no
+      // webhook managed to perform the join (see reconcileEntitlement).
+      await env.ENTITLEMENTS.put(
+        `revmap:${link.googleId}`,
+        JSON.stringify({ subscription_id: link.subscription_id })
+      );
+      await flushPendingSubscription(env, link.subscription_id, link.googleId);
     }
   } else if (eventType.startsWith('subscription.')) {
     // Subscription events carry lifecycle status but no googleId. Apply if the
     // subscription is already linked; otherwise stash until a transaction links it.
-    const built = buildSubscriptionRecord(event, { monthly: env.PRICE_MONTHLY, annual: env.PRICE_ANNUAL });
+    const built = buildSubscriptionRecord(event, priceMap(env));
     if (built) {
       const mapRaw = await env.ENTITLEMENTS.get(`map:${built.subscription_id}`);
       if (mapRaw) {
@@ -115,6 +119,12 @@ async function handlePaddleWebhook(request, env) {
             { expirationTtl: SUBPENDING_TTL_SECONDS }
           );
         }
+        // Re-check the link: Paddle delivers both events for a checkout within
+        // milliseconds, and KV gives no read-after-write guarantee, so the map
+        // read above can miss a write the transaction handler already made.
+        // Attempting the join from this side too closes that window.
+        const linked = await env.ENTITLEMENTS.get(`map:${built.subscription_id}`);
+        if (linked) await flushPendingSubscription(env, built.subscription_id, JSON.parse(linked).googleId);
       }
     }
   }
@@ -139,7 +149,12 @@ async function requireSubscription(request, env) {
   return { subscriptionId: record.subscription_id };
 }
 
-const priceMap = (env) => ({ monthly: env.PRICE_MONTHLY, annual: env.PRICE_ANNUAL });
+const priceMap = (env) => ({
+  monthly: env.PRICE_MONTHLY,
+  annual: env.PRICE_ANNUAL,
+  monthlyNoTrial: env.PRICE_MONTHLY_NOTRIAL,
+  annualNoTrial: env.PRICE_ANNUAL_NOTRIAL,
+});
 
 const paddleError = (result) => json({ error: 'paddle_error', detail: result.detail }, 502);
 
@@ -192,7 +207,13 @@ async function handleChangePlan(request, env) {
     (current.data.items && current.data.items[0] && current.data.items[0].price && current.data.items[0].price.id) || null;
   if (planFromPriceId(currentPriceId, prices) === targetPlan) return json({ error: 'already_on_plan' }, 409);
 
-  const result = await changePlan(env, resolved.subscriptionId, prices[targetPlan], targetPlan, {
+  // Stay within the subscriber's price family: a no-trial subscription must
+  // switch to the other no-trial price, never back onto a trial-bearing one.
+  const noTrialFamily = currentPriceId === prices.monthlyNoTrial || currentPriceId === prices.annualNoTrial;
+  const targetPriceId = noTrialFamily
+    ? (targetPlan === 'monthly' ? prices.monthlyNoTrial : prices.annualNoTrial)
+    : prices[targetPlan];
+  const result = await changePlan(env, resolved.subscriptionId, targetPriceId, targetPlan, {
     preview: !!(body && body.preview),
     subscriptionStatus: current.data.status,
   });
@@ -211,9 +232,38 @@ async function applyEntitlement(env, googleId, record) {
   }
 }
 
+// Complete the subscription↔googleId join: apply a parked record and clear it.
+// Idempotent, so both webhook branches and the read path can safely attempt it.
+async function flushPendingSubscription(env, subscriptionId, googleId) {
+  const pendingRaw = await env.ENTITLEMENTS.get(`subpending:${subscriptionId}`);
+  if (!pendingRaw) return null;
+  const { record } = JSON.parse(pendingRaw);
+  await applyEntitlement(env, googleId, record);
+  await env.ENTITLEMENTS.delete(`subpending:${subscriptionId}`);
+  return record;
+}
+
+// Last line of defence for the KV consistency window: when a checkout's two
+// webhooks raced, each reading the store before the other's write was visible,
+// the link and the parked record both exist but nothing joined them and the
+// subscriber reads as free. By the time a client asks, those writes have long
+// settled — so finish the join here. Returns the healed record, or null.
+async function reconcileEntitlement(env, googleId) {
+  const revRaw = await env.ENTITLEMENTS.get(`revmap:${googleId}`);
+  if (!revRaw) return null;
+  let subscriptionId = null;
+  try {
+    subscriptionId = JSON.parse(revRaw).subscription_id;
+  } catch {
+    return null;
+  }
+  if (!subscriptionId) return null;
+  return flushPendingSubscription(env, subscriptionId, googleId);
+}
+
 // AI completion proxy — Pro users only, rate-limited per user (burst +
 // daily). Body caps and field allowlisting live in validateAIRequest.
-async function handleAIComplete(request, env) {
+async function handleAIComplete(request, env, ctx) {
   const identity = await authenticate(request, env);
   if (!identity) return json({ error: 'invalid_token' }, 401);
   // Entitlement gate before the rate limit: a pro_required rejection must not
@@ -243,6 +293,13 @@ async function handleAIComplete(request, env) {
   }
   const result = await completeAI(env, validated);
   if (!result.ok) return json({ error: result.error }, result.status);
+  // Usage bookkeeping for the War Room "AI usage by action type" chart. The
+  // optional `action` slug is read from the raw body (validateAIRequest drops
+  // it, so it never reaches upstream). Fire-and-forget: recordAIUsage never
+  // rejects, and `ctx &&` keeps tests that omit an ExecutionContext working.
+  // Old clients that send no action are recorded as 'unknown'.
+  const usage = recordAIUsage(env.SHARED_DB, { action: body && body.action, googleId: identity.googleId });
+  if (ctx) ctx.waitUntil(usage);
   return json({ content: result.content });
 }
 
@@ -549,6 +606,29 @@ async function handleAuthToken(request, env) {
   return json(result.body, result.status);
 }
 
+// Trial eligibility for the public pricing page (tabox.co/pro). Unauthenticated
+// by design — the page only has the uid from its query string, no Google token.
+// It reveals a single boolean about a high-entropy googleId, and fails OPEN
+// (eligible) so a Worker hiccup never blocks a legitimate first checkout; the
+// page treats any error the same way. A googleId that ever held a real Paddle
+// subscription (any status — canceled included, records are never deleted by
+// webhooks) has used its one trial.
+async function handleCheckoutEligibility(request, env, url) {
+  const uid = url.searchParams.get('uid') || '';
+  if (!/^\d{5,30}$/.test(uid)) return json({ trial_eligible: true });
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const allowed = await checkRateLimit(env, `ip:${ip}`, 'eligibility', 30, 60, Date.now());
+  if (!allowed) return json({ error: 'rate_limited' }, 429);
+  let record = null;
+  try {
+    const raw = await env.ENTITLEMENTS.get(`ent:${uid}`);
+    if (raw) record = JSON.parse(raw);
+  } catch {
+    record = null;
+  }
+  return json({ trial_eligible: !(record && record.subscription_id) });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -569,7 +649,8 @@ export default {
     if (request.method === 'GET' && url.pathname === '/auth/callback') return handleAuthCallback(request);
     if (request.method === 'GET' && url.pathname === '/auth/start') return handleAuthStart(request, env);
     if (request.method === 'GET' && url.pathname === '/entitlement') return handleEntitlement(request, env);
-    if (request.method === 'POST' && url.pathname === '/ai/complete') return handleAIComplete(request, env);
+    if (request.method === 'GET' && url.pathname === '/checkout/eligibility') return handleCheckoutEligibility(request, env, url);
+    if (request.method === 'POST' && url.pathname === '/ai/complete') return handleAIComplete(request, env, ctx);
     if (request.method === 'POST' && url.pathname === '/ai/validate-urls') return handleValidateUrls(request, env);
     if (request.method === 'GET' && url.pathname === '/subscription') return handleGetSubscription(request, env);
     if (request.method === 'POST' && url.pathname === '/subscription/cancel') return handleCancelSubscription(request, env);
