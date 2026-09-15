@@ -15,7 +15,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL_TIERS = {
   default: { model: 'google/gemini-3.5-flash-lite', maxTokens: 8192 },
   thinking: {
-    model: 'google/gemini-3.7-flash',
+    model: 'google/gemini-3.8-flash',
     maxTokens: 16384,
     reasoning: { effort: 'medium' },
   },

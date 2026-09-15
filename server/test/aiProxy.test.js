@@ -137,7 +137,7 @@ describe('POST /ai/complete', () => {
     const res = await worker.fetch(req('t-user', { ...VALID_BODY, model_tier: 'thinking' }), env(PRO_KV()));
     expect(res.status).toBe(200);
     const upstream = JSON.parse(calls.openrouter[0].opts.body);
-    expect(upstream.model).toBe('google/gemini-3.7-flash');
+    expect(upstream.model).toBe('google/gemini-3.8-flash');
     expect(upstream.max_tokens).toBe(16384);
     expect(upstream.reasoning).toEqual({ effort: 'medium' });
     expect(upstream.model_tier).toBeUndefined();
