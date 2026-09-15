@@ -54,3 +54,6 @@ server/.wrangler/
 tabox-firefox-*.zip
 tabox-source-*.zip
 videos/
+
+# Playwright CLI scratch output (page snapshots / console logs)
+.playwright-cli/
