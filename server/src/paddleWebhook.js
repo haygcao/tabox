@@ -1,3 +1,5 @@
+import { planFromPriceId } from './subscriptionManagement.js';
+
 const SIGNATURE_TOLERANCE_S = 900; // 15 min
 
 // Constant-time hex comparison (no Node crypto in Cloudflare Workers).
@@ -33,7 +35,7 @@ export function buildSubscriptionRecord(event, priceMap) {
   const sub = event.data;
   if (!sub || !sub.id) return null;
   const priceId = (sub.items && sub.items[0] && sub.items[0].price && sub.items[0].price.id) || null;
-  const plan = priceId === priceMap.monthly ? 'monthly' : priceId === priceMap.annual ? 'annual' : null;
+  const plan = planFromPriceId(priceId, priceMap);
   return {
     subscription_id: sub.id,
     record: {

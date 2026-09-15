@@ -32,8 +32,8 @@ export async function paddleFetch(env, path, { method = 'GET', body } = {}) {
 }
 
 export function planFromPriceId(priceId, priceMap) {
-  if (priceId === priceMap.monthly) return 'monthly';
-  if (priceId === priceMap.annual) return 'annual';
+  if (priceId === priceMap.monthly || priceId === priceMap.monthlyNoTrial) return 'monthly';
+  if (priceId === priceMap.annual || priceId === priceMap.annualNoTrial) return 'annual';
   return null;
 }
 

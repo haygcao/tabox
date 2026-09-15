@@ -608,6 +608,24 @@
     var pageQuery = new URLSearchParams(window.location.search);
     var checkoutGoogleId = pageQuery.get("uid") || "";
     var checkoutEmail = pageQuery.get("email") || "";
+
+    // One free trial per Google account: ask the Worker whether this uid ever
+    // held a real subscription. Fails OPEN (trial UI stays) — the Worker is the
+    // sole authority and answers false only on a definite prior subscription.
+    var TABOX_API = "https://tabox-api.gilgold13.workers.dev";
+    var trialEligible = true;
+    if (checkoutGoogleId) {
+      fetch(TABOX_API + "/checkout/eligibility?uid=" + encodeURIComponent(checkoutGoogleId))
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          if (body && body.trial_eligible === false) {
+            trialEligible = false;
+            document.querySelectorAll(".tbx-trial-pill").forEach(function (el) { el.style.display = "none"; });
+            document.querySelectorAll(".tbx-cta").forEach(function (el) { el.textContent = "Subscribe now"; });
+          }
+        })
+        .catch(function () { /* fail open */ });
+    }
     function prefillEmail() {
       var e = signedInEmail() || checkoutEmail;
       return (typeof e === "string" && e.indexOf("@") > 0) ? e : null;
@@ -699,7 +717,8 @@
     Paddle.Initialize({ token: PADDLE_CLIENT_TOKEN });
 
     function openCheckout(tier) {
-      var priceId = tier.priceId[cadence];
+      var ids = trialEligible ? tier.priceId : (tier.priceIdNoTrial || tier.priceId);
+      var priceId = ids[cadence];
       if (!checkoutGoogleId) {
         // Never take a payment we can't link to a Google account — the
         // entitlement would be undeliverable (see webhook subpending flow).
