@@ -1105,11 +1105,6 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate, hub }) {
                                 <AIChatAvatar />
                                 <div className="tp-bubble tp-thinking" role="status" aria-live="polite">
                                     <span className="tp-thinking-text">{thinkingMsg}</span>
-                                    <span className="tp-thinking-dots" aria-hidden="true">
-                                        <span className="tp-dot" />
-                                        <span className="tp-dot" />
-                                        <span className="tp-dot" />
-                                    </span>
                                 </div>
                             </div>
                         )}
