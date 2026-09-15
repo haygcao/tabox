@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="54" viewBox="0 0 400 54">
+  <defs>
+    <filter id="shadow" x="-20%" y="-40%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#02040C" flood-opacity="0.95"/>
+    </filter>
+  </defs>
+  <text x="62" y="37" fill="#FFFFFF" stroke="#000000" stroke-width="1.4" paint-order="stroke fill" font-family="Comfortaa, sans-serif" font-size="20" font-weight="700" filter="url(#shadow)">Powered by Google Drive</text>
+</svg>

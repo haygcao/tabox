@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tabox Chrome Web Store — ImageGen Feature Screenshots</title>
+  <style>
+    @font-face {
+      font-family: "Comfortaa";
+      src: url("../first-screenshot/fonts/Comfortaa-VariableFont_wght.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: block;
+    }
+    :root {
+      --blue: #1698e2;
+      --purple: #8b5dff;
+      --orange: #ff8c42;
+      --white: #fff;
+      --muted: #c9d3ee;
+      font-family: "Comfortaa", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1280px; min-height: 800px; background: #040713; }
+    body { font-family: "Comfortaa", sans-serif; }
+    .artboard {
+      position: relative;
+      display: none;
+      width: 1280px;
+      height: 800px;
+      overflow: hidden;
+      isolation: isolate;
+      color: var(--white);
+      background: #040713;
+    }
+    body[data-shot="sync"] #sync,
+    body[data-shot="search"] #search,
+    body[data-shot="share"] #share,
+    body[data-shot="ai"] #ai { display: block; }
+    .generated-art {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+    }
+    .wash {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background:
+        linear-gradient(90deg, rgba(4,7,19,.90) 0%, rgba(4,7,19,.76) 34%, rgba(4,7,19,.30) 49%, rgba(4,7,19,.02) 67%),
+        linear-gradient(180deg, rgba(4,7,19,.08), transparent 44%, rgba(4,7,19,.10));
+    }
+    .brand {
+      position: absolute;
+      z-index: 3;
+      top: 51px;
+      left: 62px;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+    .brand img { width: 68px; height: 68px; }
+    .brand-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+    .brand-word { color: #fff; font-size: 40px; line-height: 1; font-weight: 560; letter-spacing: -.8px; }
+    .brand-slogan,
+    .pro-word {
+      color: transparent;
+      background: linear-gradient(90deg, var(--purple), var(--blue) 52%, var(--orange));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .brand-slogan { font-size: 20px; line-height: 1.1; font-weight: 520; letter-spacing: -.15px; white-space: nowrap; }
+    .copy { position: absolute; z-index: 3; top: 202px; left: 62px; width: 505px; }
+    h1 { margin: 0; max-width: 535px; font-size: 58px; line-height: 1.01; font-weight: 700; letter-spacing: -3px; text-shadow: 0 3px 18px rgba(0,0,0,.28); }
+    .subhead { max-width: 465px; margin: 26px 0 0; color: var(--muted); font-size: 20px; line-height: 1.46; letter-spacing: -.32px; text-shadow: 0 2px 14px rgba(0,0,0,.35); }
+    .pro-badge {
+      position: absolute;
+      top: 48px;
+      right: 52px;
+      z-index: 4;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      text-shadow: 0 3px 16px rgba(0,0,0,.42);
+    }
+    .pro-tabox { color: #fff; font-size: 29px; font-weight: 660; letter-spacing: -.6px; }
+    .pro-word { font-size: 35px; font-weight: 700; letter-spacing: .7px; }
+    .pro-price { margin-top: 31px; color: #fff; text-shadow: 0 2px 14px rgba(0,0,0,.35); }
+    .pro-price strong { display: block; font-size: 17px; line-height: 1.25; font-weight: 650; }
+    .pro-price small { display: block; margin-top: 7px; color: #bac5dc; font-size: 14px; line-height: 1.1; }
+    #share .copy, #ai .copy { top: 187px; }
+    #share h1, #ai h1 { font-size: 55px; }
+    #share .subhead, #ai .subhead { margin-top: 23px; }
+    #search .generated-art { object-position: 52% center; }
+    #share .generated-art { object-position: 50% center; }
+    #ai .generated-art { object-position: 50% center; }
+  </style>
+</head>
+<body>
+  <section class="artboard" id="sync">
+    <img class="generated-art" src="generated/sync-imagegen-v1.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="copy"><h1>Your collections.<br>Everywhere.</h1><p class="subhead">Keep your Tabox library in sync across devices with your own Google Drive.</p></div>
+  </section>
+
+  <section class="artboard" id="search">
+    <img class="generated-art" src="generated/search-imagegen-v1.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="copy"><h1>Find any tab.<br>Instantly.</h1><p class="subhead">Search saved collections and every open window, then jump to the right tab in one click.</p></div>
+  </section>
+
+  <section class="artboard" id="share">
+    <img class="generated-art" src="generated/sharing-imagegen-v1.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="pro-badge"><span class="pro-tabox">Tabox</span><span class="pro-word">PRO</span></div>
+    <div class="copy"><h1>Share the whole<br>workspace.</h1><p class="subhead">Invite people to live folders or share any collection with a clean link.</p><div class="pro-price"><strong>Starting at just 4.99$* a month!</strong><small>* billed annually</small></div></div>
+  </section>
+
+  <section class="artboard" id="ai">
+    <img class="generated-art" src="generated/ai-imagegen-v1.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="pro-badge"><span class="pro-tabox">Tabox</span><span class="pro-word">PRO</span></div>
+    <div class="copy"><h1>Let Tabox<br>organize for you.</h1><p class="subhead">Plan, group, rename, arrange, and clean up collections with Tabox AI.</p><div class="pro-price"><strong>Starting at just 4.99$* a month!</strong><small>* billed annually</small></div></div>
+  </section>
+  <script>
+    const shot = new URLSearchParams(location.search).get('shot') || 'sync';
+    document.body.dataset.shot = shot;
+  </script>
+</body>
+</html>
