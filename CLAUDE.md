@@ -128,6 +128,7 @@ No API keys are bundled with the extension. All secrets (Google OAuth client sec
 - Webpack splits vendor chunks (React, UI libs, dnd-kit)
 - Release builds strip `console.log` via Terser
 - After any code change, always run `yarn prod` before considering the work complete
+- Marketing site & pricing page: **tabox.co is a Next.js app on Vercel** (`~/Projects/tabox-homepage`, deploys on push to its `main`) — the old Wix site and this repo's `site/pricing/` builder are retired. The live Paddle checkout lives in that repo's `app/pro/ProPricing.js` (live client token + the four `pri_` ids, trial vs no-trial chosen from the Worker's `GET /checkout/eligibility`); keep those ids in sync with `server/wrangler.toml`. No manual copy-paste step exists any more.
 
 ## Git & Registry Rules
 

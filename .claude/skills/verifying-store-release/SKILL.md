@@ -21,17 +21,24 @@ The environment switch is a hardcoded constant copied verbatim into the bundle �
 
 ```bash
 grep -n "PRO_ENV = " chrome/pro-config.js                                   # must be 'production'
-grep -n "PADDLE_ENVIRONMENT\|PADDLE_CLIENT_TOKEN =" site/pricing/pricing.html  # 'production' + live_ token; if the (gitignored) file is missing, rebuild: PADDLE_ENV=production PADDLE_CLIENT_TOKEN=live_… node site/pricing/build-pricing.mjs — the deployed copy lives in the Wix Custom Code block, updated only by manual re-paste
+grep -n "PADDLE_ENVIRONMENT\|PADDLE_CLIENT_TOKEN =" ~/Projects/tabox-homepage/app/pro/ProPricing.js  # 'production' + live_ token
 grep -n "FORCE_ONBOARDING_FOR_POPUP_TESTING" app/OnboardingGuide.js         # must be false
 ```
 
-`server/checkout-page/tabox-pro-checkout.html` is a sandbox-only E2E harness, never served in production (the real checkout is built from `site/pricing/pricing.template.html`) — its `PADDLE_ENV = 'sandbox'` is correct; do not flag it.
+The live checkout page is `app/pro/ProPricing.js` in the **tabox-homepage** repo (`~/Projects/tabox-homepage`, Next.js on Vercel, deploys itself on push to main) — Wix and `site/pricing/` are retired, and the extension release does not depend on either. When a release changes the Paddle catalog or `/checkout/…` Worker contract, check that repo's price ids against `server/wrangler.toml` and confirm it is committed and pushed:
+
+```bash
+grep -n "pri_01\|TABOX_API" ~/Projects/tabox-homepage/app/pro/ProPricing.js  # ids must match wrangler.toml top-level env
+git -C ~/Projects/tabox-homepage status --short && git -C ~/Projects/tabox-homepage log origin/main..HEAD --oneline  # both empty = deployed
+```
+
+`server/checkout-page/tabox-pro-checkout.html` is a sandbox-only E2E harness, never served in production — its `PADDLE_ENV = 'sandbox'` is correct; do not flag it.
 
 Then network surfaces and placeholders:
 
 ```bash
 grep -n "sandbox\|localhost" chrome/manifest.json          # must be empty (host_permissions/externally_connectable are prod-only)
-grep -rn "REPLACE_WITH" server/checkout-page/ site/pricing/ # must be empty — placeholder tokens block release
+grep -rn "REPLACE_WITH" server/checkout-page/ ~/Projects/tabox-homepage/app/pro/ # must be empty — placeholder tokens block release
 grep -n "PADDLE_API_BASE\|PRICE_" server/wrangler.toml | grep -v sandbox   # top-level env: api.paddle.com + live pri_ ids
 ```
 
