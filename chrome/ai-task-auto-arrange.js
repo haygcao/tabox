@@ -82,6 +82,7 @@ const def = {
         const session = await client.createAISession({
             systemPrompt: 'You sort browser-tab collections into folders. Folder names are short (2-4 words), specific, Title Case, no quotes or emojis.',
             temperature: 0,
+            action: 'auto-arrange',
         });
         try {
             for (let start = 0; start < loose.length; start += planners.MAX_COLLECTIONS) {

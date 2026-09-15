@@ -76,6 +76,7 @@ const def = {
                     systemPrompt: 'You name groups of browser tabs. Names are short (2-4 words), specific, and in Title Case. Never include quotes or emojis.',
                     temperature: 0,
                     signal,
+                    action: 'duplicate-sweep',
                 });
                 const size = planners.BATCH_NAME_SIZE;
                 const batches = [];

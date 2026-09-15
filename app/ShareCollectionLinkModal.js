@@ -27,8 +27,9 @@ function toSnapshot(collection) {
     return data;
 }
 
-export default function ShareCollectionLinkModal() {
-    const [collection, setCollection] = useAtom(shareCollectionLinkModalState);
+export default function ShareCollectionLinkModal({ inlineCollection, onInlineClose } = {}) {
+    const [modalCollection, setCollection] = useAtom(shareCollectionLinkModalState);
+    const collection = inlineCollection || modalCollection;
     const isPro = useAtomValue(isProState);
     const [link, setLink] = useState(null); // { token, url } | null
     const [loaded, setLoaded] = useState(false);
@@ -58,7 +59,7 @@ export default function ShareCollectionLinkModal() {
     }, [collection, isPro]);
 
     if (!collection) return null;
-    const close = () => !busy && setCollection(null);
+    const close = () => { if (!busy) { if (inlineCollection) onInlineClose(); else setCollection(null); } };
 
     const upload = async (isUpdate) => {
         setBusy(true);
@@ -108,17 +109,7 @@ export default function ShareCollectionLinkModal() {
         }
     };
 
-    return (
-        <Modal
-            isOpen
-            onRequestClose={close}
-            contentLabel={`Share ${collection.name} via link`}
-            ariaHideApp={false}
-            className={`modal-content share-collection-link-modal${!isPro ? ' share-modal--upsell' : ''}`}
-            overlayClassName="modal-overlay share-collection-link-overlay"
-            shouldCloseOnOverlayClick={!busy}
-            shouldCloseOnEsc={!busy}
-        >
+    const content = <>
             <div className="share-modal-header">
                 <div className="share-modal-header-icon" aria-hidden="true">
                     <MdLink size={22} />
@@ -185,6 +176,20 @@ export default function ShareCollectionLinkModal() {
                     )}
                 </div>
             )}
+    </>;
+    if (inlineCollection) return <section aria-label={`Share ${collection.name} via link`}>{content}</section>;
+    return (
+        <Modal
+            isOpen
+            onRequestClose={close}
+            contentLabel={`Share ${collection.name} via link`}
+            ariaHideApp={false}
+            className={`modal-content share-collection-link-modal${!isPro ? ' share-modal--upsell' : ''}`}
+            overlayClassName="modal-overlay share-collection-link-overlay"
+            shouldCloseOnOverlayClick={!busy}
+            shouldCloseOnEsc={!busy}
+        >
+            {content}
         </Modal>
     );
 }

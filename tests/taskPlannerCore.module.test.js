@@ -139,7 +139,8 @@ describe('buildPillsPrompt', () => {
 describe('schemas', () => {
     test('PLANNER_TURN_SCHEMA is strict-mode compatible and matches the diff contract', () => {
         const s = core.PLANNER_TURN_SCHEMA;
-        expect(s.required).toEqual(['reply', 'collectionName', 'changedGroups', 'removedGroupTitles', 'removedUrls']);
+        expect(s.required).toEqual(['reply', 'collectionName', 'changedGroups', 'removedGroupTitles', 'removedUrls', 'followUps']);
+        expect(s.properties.followUps.maxItems).toBe(core.MAX_FOLLOW_UPS);
         expect(s.additionalProperties).toBe(false);
         expect(s.properties.reply.maxLength).toBe(core.MAX_REPLY_CHARS);
         expect(s.properties.collectionName.maxLength).toBe(core.MAX_COLLECTION_NAME);
@@ -386,7 +387,7 @@ describe('normalizeTurn (validate + merge)', () => {
     });
 
     test('tolerates garbage input', () => {
-        expect(core.normalizeTurn(null, [])).toEqual({ reply: core.DEFAULT_REPLY, collectionName: '', groups: [] });
+        expect(core.normalizeTurn(null, [])).toEqual({ reply: core.DEFAULT_REPLY, collectionName: '', groups: [], followUps: [] });
         expect(core.normalizeTurn({ changedGroups: 'nope', removedUrls: 42, removedGroupTitles: {} }, undefined).groups).toEqual([]);
         const prev = prevSet();
         expect(core.normalizeTurn({}, prev).groups).toEqual(prev);
@@ -770,4 +771,10 @@ describe('mintUid', () => {
         expect(typeof a).toBe('string');
         expect(a).not.toBe(b);
     });
+});
+
+test('normalizeTurn keeps at most MAX_FOLLOW_UPS clean, deduped follow-ups', () => {
+    const out = core.normalizeTurn({ reply: 'ok', collectionName: '', changedGroups: [], removedGroupTitles: [], removedUrls: [],
+        followUps: ['Add more attractions', ' add more attractions ', 42, '', 'Find more hotel options', 'Focus on budget picks', 'One too many'] }, []);
+    expect(out.followUps).toEqual(['Add more attractions', 'Find more hotel options', 'Focus on budget picks']);
 });

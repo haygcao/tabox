@@ -1,11 +1,16 @@
+import AIChatAvatar from './AIChatAvatar';
+import { syncSessionStateState } from '../atoms/globalAppSettingsState';
+import AIHubActionCard from './AIHubActionCard';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { MdClose, MdDriveFileMoveOutline, MdFolderOpen, MdLink, MdRefresh, MdSend } from 'react-icons/md';
+import { MdClose, MdDriveFileMoveOutline, MdFolderOpen, MdLink, MdRefresh, MdSend, MdGridView, MdEdit } from 'react-icons/md';
 import { BsStars } from 'react-icons/bs';
 import { aiProcessingUidsState } from '../atoms/aiState';
 import { shareCollectionLinkModalState } from '../atoms/sharedFoldersState';
 import { isProState } from '../atoms/premiumState';
 import ProBadge from '../ProBadge';
+import ShareCollectionLinkModal from '../ShareCollectionLinkModal';
 import TaboxCollection from '../model/TaboxCollection';
 import { applyUid } from '../utils';
 import { loadAllCollections, loadAllFolders, loadSingleCollection } from '../utils/storageUtils';
@@ -16,6 +21,7 @@ import { FALLBACK_FAVICON } from '../utils/sharedConstants';
 import { showSuccessToast } from '../toastHelpers';
 import { browser } from '../../static/globals';
 import './TaskPlannerPanel.css';
+import AIHubSuggestions from './AIHubSuggestions';
 
 // chrome.storage.local key owned by the service worker's task-planner module.
 // The panel renders EXCLUSIVELY from this session state: the initial
@@ -23,18 +29,41 @@ import './TaskPlannerPanel.css';
 // of truth) — so a reopened popup reattaches to an in-flight chat for free.
 const SESSION_KEY = 'taskPlannerSession';
 
-// Rotating status lines shown while the AI is thinking; a new one is picked
-// at random each turn.
+// Rotating status lines shown while the AI is thinking. A random one is picked
+// when the wait starts and swapped every few seconds, so a long wait never
+// stares back with a frozen "Thinking…".
 const THINKING_MESSAGES = [
-    'Sketching your plan…',
-    'Scouting the best sites…',
-    'Sorting tabs into groups…',
-    'Curating your tabs…',
-    'Mapping it out…',
-    'Picking the good stuff…',
-    'Lining up your links…',
-    'Polishing the plan…',
+    'Herding your tabs…',
+    'Consulting the tab oracle…',
+    'Untangling browser spaghetti…',
+    'Counting your 147 open tabs…',
+    'Asking the tabs to behave nicely…',
+    'Doing suspiciously fast math…',
+    'Reticulating splines…',
+    'Negotiating with your bookmarks…',
+    'Teaching tabs to stand in line…',
+    'Rummaging through the tab drawer…',
+    'Alphabetizing the chaos…',
+    'Convincing tab 38 to cooperate…',
+    'Bribing the algorithm…',
+    'Summoning tidy vibes…',
+    'Warming up the tab wrangler…',
+    'Pretending to think really hard…',
+    'Googling how to do this…',
+    'Putting on its thinking hat…',
+    'Shuffling pixels into place…',
+    'Stalling, but charmingly…',
 ];
+
+// How long a single funny line stays on screen before the next one.
+const THINKING_ROTATE_MS = 2800;
+
+// Random line, never the one already on screen (so a swap always looks like one).
+const pickThinkingMsg = (prev) => {
+    const pool = THINKING_MESSAGES.filter(m => m !== prev);
+    const list = pool.length ? pool : THINKING_MESSAGES;
+    return list[Math.floor(Math.random() * list.length)];
+};
 
 // Google's favicon service for gathered tabs (the model supplies no favIconUrl);
 // a broken load falls back to the bundled placeholder via onError.
@@ -47,6 +76,13 @@ const faviconFor = (url) => {
     }
     return FALLBACK_FAVICON;
 };
+
+// Hub routes that answer inline in the chat and never open a tool card.
+const CARDLESS_TOOLS = new Set(['clarify', 'find-tab']);
+
+// Opens a saved tab found by the "find-tab" chat action (browser.tabs.create
+// exists on both Chromium and Firefox).
+const openFoundTab = (url) => browser.tabs.create({ url }).catch(() => {});
 
 const handleFaviconError = (e) => {
     const img = e.currentTarget;
@@ -94,7 +130,7 @@ const mergeRemovedBack = (nextGroups, prevGroups, removedUids) => {
 // The popup only initiates work and renders session state — every mutation
 // (start/send/removeTab/reset) is a runtime message handled in the service
 // worker, so closing the popup never aborts a turn.
-function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
+function TaskPlannerPanel({ updateRemoteData, onDataUpdate, hub }) {
     const setAiProcessingUids = useSetAtom(aiProcessingUidsState);
     // Share chip → the globally mounted ShareCollectionLinkModal (App.js); it
     // handles sign-in + the Pro paywall itself, so the chip never pre-gates.
@@ -103,9 +139,24 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
 
     const [session, setSession] = useState(null);
     const [input, setInput] = useState('');
+    const [shareTarget, setShareTarget] = useState(null);
+    const chatUser = useAtomValue(syncSessionStateState)?.user;
+    const sentActionRef = useRef(null);
+    const mountedAtRef = useRef(Date.now());
+    const sendingRef = useRef(false);
+    const requestedActionRef = useRef(null);
+    const [sending, setSending] = useState(false);
+    const onHubAction = hub?.onAction;
+    useEffect(() => {
+        const action = session?.hubAction;
+        if (!action || action.id === sentActionRef.current || !onHubAction) return;
+        sentActionRef.current = action.id;
+        const requestedAt = (session.messages || []).find(m => m.id === action.id)?.ts;
+        if (!CARDLESS_TOOLS.has(action.tool)) onHubAction({ ...action, requestedAt, restoring: requestedAt < mountedAtRef.current });
+    }, [session?.hubAction, onHubAction]);
     const [actionError, setActionError] = useState(null);
     const [saving, setSaving] = useState(false);
-    const [thinkingMsg, setThinkingMsg] = useState(THINKING_MESSAGES[0]);
+    const [thinkingMsg, setThinkingMsg] = useState(() => pickThinkingMsg());
     // uids the user just removed — collapse them immediately while the SW write
     // is in flight (the storage change then drops them from the list for real).
     const [removingTabs, setRemovingTabs] = useState([]);
@@ -135,6 +186,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     // Guards the slow initial read against clobbering a fresher storage change
     // (same pattern as useSmartOrganizeUndo).
     const loadedRef = useRef(false);
+    const sessionVersionRef = useRef(0);
     const messagesRef = useRef(null);
     const textareaRef = useRef(null);
     const flashTimerRef = useRef(null);
@@ -160,6 +212,8 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     const groups = useMemo(() => session?.groups || [], [session]);
     const sessionId = session?.sessionId || null;
     const isThinking = session?.status === 'thinking';
+    const onActivityChange = hub?.onActivityChange;
+    useEffect(() => { onActivityChange?.(isThinking || sending || saving); }, [isThinking, sending, saving, onActivityChange]);
     // Set once the session is linked to a saved collection (after a save, or
     // after loading one via the picker) — Save becomes an in-place Update.
     const linkedUid = session?.linkedCollectionUid || null;
@@ -204,6 +258,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
 
         const onChanged = (changes, area) => {
             if (area !== 'local' || !changes[SESSION_KEY]) return;
+            sessionVersionRef.current += 1;
             loadedRef.current = true;
             setSession(changes[SESSION_KEY].newValue || null);
         };
@@ -219,12 +274,15 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     }, []);
 
-    // Pick a fresh thinking line each turn.
+    // Any wait that shows the bubble: planner thinking, a chat turn in flight, or
+    // a hub tool working. Pick a fresh line when it starts, then rotate.
+    const waiting = isThinking || sending || !!hub?.busy;
     useEffect(() => {
-        if (isThinking) {
-            setThinkingMsg(THINKING_MESSAGES[Math.floor(Math.random() * THINKING_MESSAGES.length)]);
-        }
-    }, [isThinking]);
+        if (!waiting) return undefined;
+        setThinkingMsg(prev => pickThinkingMsg(prev));
+        const id = setInterval(() => setThinkingMsg(prev => pickThinkingMsg(prev)), THINKING_ROTATE_MS);
+        return () => clearInterval(id);
+    }, [waiting]);
 
     // Seed the name field from the AI suggestion until the user edits it.
     const aiName = session?.collectionName || '';
@@ -236,7 +294,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     useEffect(() => {
         const el = messagesRef.current;
         if (el) el.scrollTop = el.scrollHeight;
-    }, [messages.length, isThinking]);
+    }, [messages.length, isThinking, sending, hub?.busy, hub?.activeTool]);
 
     // Mirror removingTabs for the diff effect below (user-initiated removals
     // must not run the AI dematerialize choreography — they collapse inline).
@@ -330,9 +388,9 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
             setDisplayGroups(prevGroupsRef.current || []);
             // Keep `added` so still-staggering materialize rows finish cleanly.
             setTabAnim((a) => (a ? { ...a, removed: new Set() } : a));
-        }, VANISH_TOTAL_MS);
+        }, hub ? 510 : VANISH_TOTAL_MS);
         return () => clearTimeout(t);
-    }, [tabAnim]);
+    }, [tabAnim, Boolean(hub)]);
 
     // Stagger order for changed rows, in display order.
     const changeOrder = useMemo(() => {
@@ -351,14 +409,22 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     const sessionGroupUids = useMemo(() => new Set(groups.map((g) => g.uid)), [groups]);
 
     // ── Actions (all mutations run in the service worker) ───────────────────
-    const sendText = useCallback(async (text) => {
+    const sendText = useCallback(async (text, action) => {
         const trimmed = (text || '').trim();
-        if (!trimmed || isThinking) return;
+        if (!trimmed || isThinking || sendingRef.current || hub?.busy) return;
+        sendingRef.current = true;
+        setSending(true);
+        setShareTarget(null);
         setActionError(null);
         setInput('');
         if (textareaRef.current) textareaRef.current.style.height = 'auto';
+        const version = sessionVersionRef.current;
         try {
-            const res = await browser.runtime.sendMessage({ type: 'taskPlannerSend', payload: { text: trimmed } });
+            const res = await browser.runtime.sendMessage({ type: 'taskPlannerSend', payload: {
+                text: trimmed,
+                ...(hub ? { hub: true, action, activeTool: hub.activeTool, scope: hub.scope } : {}),
+            } });
+            if (res?.state && version === sessionVersionRef.current) setSession(res.state);
             if (res && res.ok === false && res.error) {
                 setActionError(res.error);
             } else if (res && res.ignored) {
@@ -370,8 +436,18 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         } catch (e) {
             console.error('Task Planner: send failed', e);
             setActionError('Could not reach Tabox AI. Please try again.');
+        } finally {
+            sendingRef.current = false;
+            setSending(false);
         }
-    }, [isThinking]);
+    }, [isThinking, hub]);
+
+    useEffect(() => {
+        const request = hub?.request;
+        if (!request || request.id === requestedActionRef.current || !session || isThinking || sending) return;
+        requestedActionRef.current = request.id;
+        sendText(request.label, { tool: request.tool, uids: request.uids || [] });
+    }, [hub?.request, session, isThinking, sending, sendText]);
 
     const handleRemoveTab = useCallback(async (groupUid, tabUid) => {
         // Optimistic collapse; a failed removal must un-collapse the row, or the
@@ -395,18 +471,21 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     // storage.onChanged; the reply only carries failures worth surfacing.
     const handleRefreshPills = useCallback(async () => {
         setActionError(null);
+        const version = sessionVersionRef.current;
         try {
-            const res = await browser.runtime.sendMessage({ type: 'taskPlannerRefreshPills' });
+            const res = await browser.runtime.sendMessage({ type: 'taskPlannerRefreshPills', ...(hub ? { payload: { hub: true } } : {}) });
+            if (res?.state && version === sessionVersionRef.current) setSession(res.state);
             if (res && res.ok === false && res.error) setActionError(res.error);
         } catch (e) {
             console.error('Task Planner: pill refresh failed', e);
             setActionError('Could not fetch new ideas. Please try again.');
         }
-    }, []);
+    }, [Boolean(hub)]);
 
     const resetLocal = useCallback(() => {
         nameTouchedRef.current = false;
         setNameDraft('');
+        setShareTarget(null);
         setInput('');
         setRemovingTabs([]);
         setPickerOpen(false);
@@ -420,28 +499,38 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
         setTabAnim(null);
     }, []);
 
-    const startFresh = useCallback(async () => {
-        try {
-            await browser.runtime.sendMessage({ type: 'taskPlannerReset' });
-            const started = await browser.runtime.sendMessage({ type: 'taskPlannerStart', payload: { force: true } });
-            if (started && started.ok) {
-                loadedRef.current = true;
-                setSession(started.state);
-            } else if (started && started.error) {
-                setActionError(started.error);
-            }
-        } catch (e) {
-            console.error('Task Planner: reset failed', e);
-            setActionError('Could not start a new plan. Please try again.');
-        }
-    }, []);
-
     const handleNewPlan = useCallback(async () => {
-        if (saving) return;
+        if (saving || isThinking || sendingRef.current || hub?.busy || removingTabs.length) return;
+        sendingRef.current = true;
+        setSending(true);
         setActionError(null);
+        // Invalidate a suggestion refresh that was started in the old chat.
+        sessionVersionRef.current += 1;
+        // Clear the UI first — a new chat is a local reset, so it must paint
+        // immediately instead of waiting on the service worker round trips
+        // (the empty chat is what the SW is about to store anyway). If the SW
+        // then fails, the previous session is put back below.
+        const previousSession = session;
         resetLocal();
-        await startFresh();
-    }, [saving, resetLocal, startFresh]);
+        setSession(null);
+        hub?.onReset?.();
+        textareaRef.current?.focus();
+        try {
+            const reset = await browser.runtime.sendMessage({ type: 'taskPlannerReset' });
+            if (reset?.ok === false) throw new Error(reset.error || 'Could not clear the chat.');
+            const started = await browser.runtime.sendMessage({ type: 'taskPlannerStart', payload: { force: true } });
+            if (!started?.ok) throw new Error(started?.error || 'Could not start a new chat.');
+            loadedRef.current = true;
+            setSession(started.state);
+        } catch (e) {
+            // The optimistic clear didn't stick — restore what the user had.
+            setSession(previousSession || null);
+            setActionError(e.message || 'Could not start a new chat. Please try again.');
+        } finally {
+            sendingRef.current = false;
+            setSending(false);
+        }
+    }, [saving, isThinking, hub, removingTabs.length, resetLocal, session]);
 
     // Save flow — build the collection from the session's groups and persist
     // it through updateRemoteData. The chat is NOT reset: the session stays
@@ -530,15 +619,18 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                 setActionError('Could not find the saved collection. Try saving again.');
                 return;
             }
-            setShareCollectionLink(full);
+            if (hub) setShareTarget(full);
+            else setShareCollectionLink(full);
         } catch (e) {
             console.error('Task Planner: share link failed', e);
             setActionError('Could not find the saved collection. Try saving again.');
         }
-    }, [linkedUid, setShareCollectionLink]);
+    }, [linkedUid, setShareCollectionLink, Boolean(hub)]);
 
     // ── Add to folder (offer chip) ──────────────────────────────────────────
     const openFolderPicker = useCallback(async () => {
+        setShareTarget(null);
+        hub?.onAction?.({ tool: 'task-planner', uids: [] });
         setActionError(null);
         setPickerOpen(false); // mutually exclusive with the collection picker
         setFolderPickerOpen(true);
@@ -551,7 +643,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
             setFolderList([]);
             setActionError('Could not load your folders. Please try again.');
         }
-    }, []);
+    }, [hub?.onAction]);
 
     // Move the linked collection into the picked folder. moveCollectionToFolder
     // does its own read-only shared-folder check ({ blocked: true }) and syncs
@@ -663,138 +755,7 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
     const pills = session?.pills;
     const showPills = !hasUserMessage && session !== null && (pills === null || (Array.isArray(pills) && pills.length > 0));
 
-    return (
-        <div className="tp-root">
-            <div className="tp-layout">
-                <div className="tp-chat">
-                    <div className="tp-messages" ref={messagesRef}>
-                        {session === null && !actionError && (
-                            <div className="tp-msg tp-msg--assistant" aria-hidden="true">
-                                <span className="tp-avatar">T</span>
-                                <div className="tp-bubble tp-bubble--skeleton" />
-                            </div>
-                        )}
-                        {session?.greeting && (
-                            <div className="tp-msg tp-msg--assistant">
-                                <span className="tp-avatar" aria-hidden="true">T</span>
-                                <div className="tp-bubble">{session.greeting}</div>
-                            </div>
-                        )}
-                        {messages.map((m, i) => (
-                            <React.Fragment key={m.id}>
-                                <div
-                                    className={`tp-msg ${m.role === 'user' ? 'tp-msg--user' : 'tp-msg--assistant'}`}
-                                    style={{ animationDelay: `${Math.min(i, 6) * 0.05}s` }}
-                                >
-                                    {m.role === 'assistant' && <span className="tp-avatar" aria-hidden="true">T</span>}
-                                    <div className="tp-bubble">{m.content}</div>
-                                </div>
-                                {m.offer && m.id === latestOfferId && !!linkedUid && (
-                                    <div className="tp-offer-chips" data-testid="tp-offer-chips">
-                                        <button
-                                            type="button"
-                                            className="tp-pill tp-offer-chip"
-                                            disabled={isThinking || saving}
-                                            onClick={handleShareLink}
-                                        >
-                                            <MdLink size={14} aria-hidden="true" />
-                                            Share via link
-                                            {!isPro && <ProBadge />}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="tp-pill tp-offer-chip"
-                                            disabled={isThinking || saving}
-                                            onClick={openFolderPicker}
-                                        >
-                                            <MdDriveFileMoveOutline size={14} aria-hidden="true" />
-                                            Add to folder
-                                        </button>
-                                    </div>
-                                )}
-                            </React.Fragment>
-                        ))}
-                        {isThinking && (
-                            <div className="tp-msg tp-msg--assistant" data-testid="tp-thinking">
-                                <span className="tp-avatar" aria-hidden="true">T</span>
-                                <div className="tp-bubble tp-thinking" role="status" aria-live="polite">
-                                    <span className="tp-thinking-text">{thinkingMsg}</span>
-                                    <span className="tp-thinking-dots" aria-hidden="true">
-                                        <span className="tp-dot" />
-                                        <span className="tp-dot" />
-                                        <span className="tp-dot" />
-                                    </span>
-                                </div>
-                            </div>
-                        )}
-                        {session?.status === 'error' && session.error && (
-                            <div className="tp-msg tp-msg--assistant">
-                                <span className="tp-avatar" aria-hidden="true">T</span>
-                                <div className="tp-bubble tp-bubble--error">{session.error}</div>
-                            </div>
-                        )}
-                    </div>
-
-                    {showPills && (
-                        <div className="tp-pills" data-testid="tp-pills">
-                            {pills === null && [0, 1, 2].map((i) => (
-                                <span key={i} className="tp-pill tp-pill--skeleton" data-testid="tp-pill-skeleton" aria-hidden="true" />
-                            ))}
-                            {Array.isArray(pills) && pills.map((pill, i) => (
-                                <button
-                                    key={pill}
-                                    type="button"
-                                    className="tp-pill"
-                                    style={{ animationDelay: `${i * 0.06}s` }}
-                                    onClick={() => sendText(pill)}
-                                    disabled={isThinking}
-                                >
-                                    {pill}
-                                </button>
-                            ))}
-                            <button
-                                type="button"
-                                className={`tp-pills-refresh${pills === null ? ' tp-pills-refresh--spinning' : ''}`}
-                                aria-label="New ideas"
-                                data-tooltip-id="main-tooltip"
-                                data-tooltip-content="New ideas"
-                                data-tooltip-class-name="small-tooltip"
-                                // Disabled while a batch is already generating (it
-                                // spins instead) or a turn is in flight.
-                                disabled={pills === null || isThinking}
-                                onClick={handleRefreshPills}
-                            >
-                                <MdRefresh size={15} />
-                            </button>
-                        </div>
-                    )}
-
-                    <div className="tp-composer">
-                        <textarea
-                            ref={textareaRef}
-                            className="tp-input"
-                            rows={1}
-                            placeholder="Describe what you're planning…"
-                            aria-label="Message Tabox AI"
-                            maxLength={4000}
-                            value={input}
-                            onChange={handleInputChange}
-                            onKeyDown={handleKeyDown}
-                            disabled={isThinking || session === null}
-                        />
-                        <button
-                            type="button"
-                            className="tp-send-btn"
-                            aria-label="Send message"
-                            onClick={() => sendText(input)}
-                            disabled={isThinking || session === null || !input.trim()}
-                        >
-                            <MdSend size={16} />
-                        </button>
-                    </div>
-                </div>
-
-                <div className="tp-tabs-panel">
+    const plannerCard = (<div className="tp-tabs-panel">
                     <div className="tp-tabs-header">
                         <div className="tp-tabs-header-row">
                             <input
@@ -998,12 +959,253 @@ function TaskPlannerPanel({ updateRemoteData, onDataUpdate }) {
                             type="button"
                             className="tp-new-plan-btn"
                             onClick={handleNewPlan}
-                            disabled={saving}
+                            disabled={saving || isThinking || sending || removingTabs.length > 0}
                         >
                             New plan
                         </button>
                     </div>
+                </div>);
+    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+    const hasPlanningInput = Boolean(lastUserMessage && !['Plan something', 'Plan something new', 'Task Planner'].includes(lastUserMessage.content));
+    const showCollectionPanel = Boolean(hub && hub.activeTool === 'task-planner' && (groups.length || linkedUid || hasPlanningInput));
+    const tabPositionsRef = useRef(new Map());
+    useLayoutEffect(() => {
+        if (!showCollectionPanel) { tabPositionsRef.current.clear(); return undefined; }
+        const nodes = Array.from(groupsScrollRef.current?.querySelectorAll('[data-tab-uid]') || []);
+        const previous = tabPositionsRef.current;
+        const next = new Map(nodes.map(node => [node.dataset.tabUid, { rect: node.getBoundingClientRect(), text: node.textContent }]));
+        tabPositionsRef.current = next;
+        if (motionDisabled()) return undefined;
+        const animations = [];
+        for (const node of nodes) {
+            const before = previous.get(node.dataset.tabUid);
+            const after = next.get(node.dataset.tabUid);
+            if (!before || typeof node.animate !== 'function' || node.classList.contains('tp-tab--vanishing')) continue;
+            const dx = before.rect.x - after.rect.x;
+            const dy = before.rect.y - after.rect.y;
+            if (dx || dy) animations.push(node.animate([
+                { transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' },
+            ], { duration: 280, easing: 'cubic-bezier(.65,0,.35,1)' }));
+            else if (before.text !== after.text) animations.push(node.animate([{ opacity: .45 }, { opacity: 1 }], { duration: 220, easing: 'ease-out' }));
+        }
+        const cancel = () => animations.forEach(animation => animation.cancel());
+        const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+        const onChange = () => { if (media.matches) cancel(); };
+        media?.addEventListener?.('change', onChange);
+        return () => { cancel(); media?.removeEventListener?.('change', onChange); };
+    }, [showCollectionPanel, displayGroups, tabAnim?.stage]);
+    const onPlanningLayout = hub?.onPlanningLayout;
+    useEffect(() => { onPlanningLayout?.(showCollectionPanel); }, [showCollectionPanel, onPlanningLayout]);
+    const inlineCard = shareTarget
+        ? <ShareCollectionLinkModal inlineCollection={shareTarget} onInlineClose={() => setShareTarget(null)} />
+        : hub?.unavailable || showCollectionPanel || CARDLESS_TOOLS.has(session?.hubAction?.tool) ? null
+            : hub?.activeTool === 'task-planner' ? (pickerOpen || folderPickerOpen ? plannerCard : <AIHubActionCard title={totalTabs ? `${nameDraft || aiName || 'Your plan'} · ${totalTabs} tabs` : 'Start your plan'}
+                description={totalTabs ? groups.map(g => g.title).join(' · ') : 'Tell me what you’re planning, or choose a saved collection.'}
+                primary={totalTabs ? { label: linkedUid ? 'Update collection' : 'Save collection', onClick: handleSave, disabled: saving || isThinking || removingTabs.length > 0 } : { label: 'Start from a collection', onClick: openPicker }}>
+                {plannerCard}
+            </AIHubActionCard>) : hub?.panel;
+    const welcome = hub && session !== null && !hasUserMessage && !hub.activeTool && !hub.showActions && !sending && !isThinking;
+    const showFollowUps = hub && hasUserMessage && !isThinking && !sending && !hub.busy && (hub.completed || !inlineCard);
+
+    // Lives beside the "Tabox AI" title (portaled into the modal header when the
+    // host provides a slot); falls back inline so the panel works standalone.
+    const newChatButton = hub ? (
+        <button type="button" className="tp-new-plan-btn ai-hub-new-chat" onClick={handleNewPlan}
+            disabled={saving || isThinking || sending || hub.busy || removingTabs.length > 0}
+            data-tooltip-id="main-tooltip" data-tooltip-content="Clear this conversation and start a new chat">
+            <MdEdit size={14} aria-hidden="true" /><span>New Chat</span>
+        </button>
+    ) : null;
+    return (
+        <div className={`tp-root${hub ? ' ai-hub-conversation' : ''}${welcome ? ' ai-hub-welcome' : ''}${showCollectionPanel ? ' ai-hub-with-collection' : ''}${hub && hub.activeTool !== 'task-planner' ? ' ai-hub-conversation--tool' : ''}${hub && !hub.panel && hub.activeTool !== 'task-planner' ? ' ai-hub-conversation--empty' : ''}`}>
+            <div className="tp-layout">
+                <div className="tp-chat">
+                    <div className="tp-messages" ref={messagesRef}>
+                        {welcome && <div className="ai-hub-welcome-copy">
+                            <h2>What would you like to do?</h2>
+                            <p>A little help with your tabs and collections.</p>
+                            <div className="ai-hub-start-prompts">
+                                <button type="button" className="tp-pill" onClick={() => sendText('Plan something', { tool: 'task-planner', uids: [] })}>Plan something</button>
+                                <button type="button" className="tp-pill" onClick={() => sendText('Organize my tabs', { tool: 'smart-organize', uids: [] })}>Organize my tabs</button>
+                                <button type="button" className="tp-pill" onClick={() => sendText('Tidy my collections')}>Tidy my collections</button>
+                                <button type="button" className="tp-pill" onClick={() => sendText('Find a saved tab', { tool: 'find-tab', uids: [] })}>Find a saved tab</button>
+                            </div>
+                        </div>}
+
+                        {session === null && !actionError && (
+                            <div className="tp-msg tp-msg--assistant" aria-hidden="true">
+                                <AIChatAvatar />
+                                <div className="tp-bubble tp-bubble--skeleton" />
+                            </div>
+                        )}
+                        {!hub && session?.greeting && (
+                            <div className="tp-msg tp-msg--assistant">
+                                <AIChatAvatar />
+                                <div className="tp-bubble">{hub ? 'What would you like to do? Plan something new, organize your tabs, or tidy your collections.' : session.greeting}</div>
+                            </div>
+                        )}
+                        {messages.filter(m => !(hub?.unavailable && m.role === 'assistant' && m.content === session?.hubAction?.reply)).map((m, i) => (
+                            <React.Fragment key={m.id}>
+                                <div
+                                    className={`tp-msg ${m.role === 'user' ? 'tp-msg--user' : 'tp-msg--assistant'}`}
+                                    style={{ animationDelay: `${Math.min(i, 6) * 0.05}s` }}
+                                >
+                                    {m.role === 'assistant' && <AIChatAvatar />}
+                                    <div className="tp-bubble">{m.content}</div>
+                                    {m.role === 'user' && <AIChatAvatar role="user" user={chatUser} />}
+                                </div>
+                                {Array.isArray(m.tabResults) && m.tabResults.length > 0 && (
+                                    <ul className="tp-tab-results" data-testid="tp-tab-results">
+                                        {m.tabResults.map((r) => (
+                                            <li key={`${r.collectionUid}:${r.url}`}>
+                                                <button
+                                                    type="button"
+                                                    className="tp-tab-result"
+                                                    onClick={() => openFoundTab(r.url)}
+                                                    data-tooltip-id="main-tooltip"
+                                                    data-tooltip-content={r.url}
+                                                    data-tooltip-class-name="small-tooltip"
+                                                >
+                                                    <img className="tp-tab-favicon" src={r.favIconUrl || faviconFor(r.url)} alt="" onError={handleFaviconError} />
+                                                    <span className="tp-tab-result-title">{r.title}</span>
+                                                    <span className="tp-tab-result-collection">{r.collectionName}</span>
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                {m.offer && m.id === latestOfferId && !!linkedUid && (
+                                    <div className="tp-offer-chips" data-testid="tp-offer-chips">
+                                        <button
+                                            type="button"
+                                            className="tp-pill tp-offer-chip"
+                                            disabled={isThinking || saving}
+                                            onClick={handleShareLink}
+                                        >
+                                            <MdLink size={14} aria-hidden="true" />
+                                            Share via link
+                                            {!isPro && <ProBadge />}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="tp-pill tp-offer-chip"
+                                            disabled={isThinking || saving}
+                                            onClick={openFolderPicker}
+                                        >
+                                            <MdDriveFileMoveOutline size={14} aria-hidden="true" />
+                                            Add to folder
+                                        </button>
+                                    </div>
+                                )}
+                            </React.Fragment>
+                        ))}
+                        {hub?.actions}
+                        {(isThinking || (hub && (sending || hub.busy))) && (
+                            <div className="tp-msg tp-msg--assistant" data-testid="tp-thinking">
+                                <AIChatAvatar />
+                                <div className="tp-bubble tp-thinking" role="status" aria-live="polite">
+                                    <span className="tp-thinking-text">{thinkingMsg}</span>
+                                    <span className="tp-thinking-dots" aria-hidden="true">
+                                        <span className="tp-dot" />
+                                        <span className="tp-dot" />
+                                        <span className="tp-dot" />
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+                        {hub && inlineCard && !isThinking && !sending && (
+                            <section className="ai-hub-action-card" aria-label="AI action" key={shareTarget ? 'share' : hub.activeTool}>
+                                {inlineCard}
+                            </section>
+                        )}
+
+                        {hub?.unavailable && !isThinking && !sending && <div className="tp-msg tp-msg--assistant">
+                            <AIChatAvatar />
+                            <div className="tp-bubble">{hub.unavailable}</div>
+                        </div>}
+                        {session?.status === 'error' && session.error && (
+                            <div className="tp-msg tp-msg--assistant">
+                                <AIChatAvatar />
+                                <div className="tp-bubble tp-bubble--error">{session.error}</div>
+                            </div>
+                        )}
+                    </div>
+
+
+                    {!hub && showPills && (
+                        <div className="tp-pills" data-testid="tp-pills">
+                            {pills === null && [0, 1, 2].map((i) => (
+                                <span key={i} className="tp-pill tp-pill--skeleton" data-testid="tp-pill-skeleton" aria-hidden="true" />
+                            ))}
+                            {Array.isArray(pills) && pills.map((pill, i) => (
+                                <button
+                                    key={pill}
+                                    type="button"
+                                    className="tp-pill"
+                                    style={{ animationDelay: `${i * 0.06}s` }}
+                                    onClick={() => sendText(pill)}
+                                    disabled={isThinking}
+                                >
+                                    {pill}
+                                </button>
+                            ))}
+                            <button
+                                type="button"
+                                className={`tp-pills-refresh${pills === null ? ' tp-pills-refresh--spinning' : ''}`}
+                                aria-label="New ideas"
+                                data-tooltip-id="main-tooltip"
+                                data-tooltip-content="New ideas"
+                                data-tooltip-class-name="small-tooltip"
+                                // Disabled while a batch is already generating (it
+                                // spins instead) or a turn is in flight.
+                                disabled={pills === null || isThinking}
+                                onClick={handleRefreshPills}
+                            >
+                                <MdRefresh size={15} />
+                            </button>
+                        </div>
+                    )}
+
+                    {showFollowUps && <AIHubSuggestions limit={2} quiet collections={hub.collections || []} scope={hub.scope} activeTool={hub.activeTool}
+                        followUps={session?.followUps} disabled={isThinking || sending || hub.busy}
+                        onRefresh={handleRefreshPills} onSelect={suggestion => sendText(suggestion.label, suggestion.tool ? { tool: suggestion.tool, uids: suggestion.uids || [] } : undefined)} />}
+                    <div className="tp-composer">
+                        {hub && <button type="button" className="ai-hub-more" aria-label="More AI actions" aria-expanded={!!hub.showActions}
+                            disabled={isThinking || sending || hub.busy} onClick={hub.onToggleActions}><MdGridView size={20} /></button>}
+                        <textarea
+                            ref={textareaRef}
+                            className="tp-input"
+                            rows={1}
+                            placeholder={hub ? 'Ask Tabox AI…' : 'Describe what you’re planning…'}
+                            aria-label="Message Tabox AI"
+                            maxLength={4000}
+                            value={input}
+                            onChange={handleInputChange}
+                            onKeyDown={handleKeyDown}
+                            disabled={isThinking || sending || hub?.busy || session === null}
+                        />
+                        <button
+                            type="button"
+                            className="tp-send-btn"
+                            aria-label="Send message"
+                            onClick={() => sendText(input)}
+                            disabled={isThinking || sending || hub?.busy || session === null || !input.trim()}
+                        >
+                            <MdSend size={16} />
+                        </button>
+                    </div>
+                    {hub && actionError && <div className="tp-error" role="alert">{actionError}</div>}
+                    {hub && <div className="ai-hub-chat-toolbar">
+                        {hub.toolbar}
+                        {hub.headerSlot ? createPortal(newChatButton, hub.headerSlot) : newChatButton}
+                    </div>}
                 </div>
+
+                {showCollectionPanel && <aside className="ai-hub-collection-panel" aria-label="Current collection">
+                    <div className="ai-hub-collection-caption">Current collection{isThinking && <span role="status">Updating…</span>}</div>
+                    {plannerCard}
+                </aside>}
+                {!hub && plannerCard}
             </div>
         </div>
     );

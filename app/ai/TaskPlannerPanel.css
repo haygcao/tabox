@@ -308,6 +308,57 @@ html.performance-mode .tp-thinking-text {
     margin: 2px 0 4px 28px;
 }
 
+/* ── find-tab results (rows under an assistant bubble) ───────────────────── */
+.tp-tab-results {
+    list-style: none;
+    margin: 2px 0 6px 28px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: calc(100% - 44px);
+}
+
+.tp-tab-result {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid rgba(128,128,160,.25);
+    border-radius: 10px;
+    background: rgba(128,128,160,.06);
+    color: var(--text-color);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.tp-tab-result:hover,
+.tp-tab-result:focus-visible {
+    background: rgba(128,128,160,.14);
+}
+
+.tp-tab-result-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tp-tab-result-collection {
+    flex: 0 0 auto;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    opacity: 0.65;
+}
+
 .tp-offer-chip {
     display: inline-flex;
     align-items: center;

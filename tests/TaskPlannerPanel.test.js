@@ -75,12 +75,12 @@ const sentMessages = (type) => browser.runtime.sendMessage.mock.calls
     .map((c) => c[0])
     .filter((m) => m.type === type);
 
-const renderPanel = async ({ updateRemoteData = jest.fn(), onDataUpdate = jest.fn() } = {}) => {
+const renderPanel = async ({ updateRemoteData = jest.fn(), onDataUpdate = jest.fn(), ...props } = {}) => {
     const store = createStore();
     await act(async () => {
         render(
             <Provider store={store}>
-                <TaskPlannerPanel updateRemoteData={updateRemoteData} onDataUpdate={onDataUpdate} />
+                <TaskPlannerPanel updateRemoteData={updateRemoteData} onDataUpdate={onDataUpdate} {...props} />
             </Provider>
         );
     });
@@ -96,6 +96,164 @@ beforeEach(() => {
     browser.storage.onChanged.removeListener = jest.fn((fn) => {
         storageListeners = storageListeners.filter((f) => f !== fn);
     });
+});
+
+test('suggestions stay outside the scrolling transcript immediately above the composer', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ messages: [{ id: 'm', role: 'user', content: 'Done' }] }) }) });
+    await renderPanel({ hub: { completed: true, collections: [] } });
+    const suggestions = screen.getByLabelText('Suggested next actions');
+    expect(suggestions.closest('.tp-messages')).toBeNull();
+    expect(suggestions.nextElementSibling).toHaveClass('tp-composer');
+});
+
+test('an unavailable action is explained in chat without an action card', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession() }) });
+    await renderPanel({ hub: { activeTool: 'smart-organize', unavailable: 'All your tabs are already grouped.', collections: [] } });
+    expect(screen.getByText('All your tabs are already grouped.').closest('.tp-messages')).not.toBeNull();
+    expect(screen.queryByRole('region', { name: 'AI action' })).not.toBeInTheDocument();
+});
+
+test('a collection plan opens a live side panel and keeps updating during chat', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ groups: GROUPS, messages: [{ id: 'm', role: 'user', content: 'Plan a trip' }] }) }) });
+    await renderPanel({ hub: { activeTool: 'task-planner', collections: [] } });
+    const panel = screen.getByRole('complementary', { name: 'Current collection' });
+    expect(screen.getByText('Google Flights').closest('aside')).toBe(panel);
+    await fireSessionChange(baseSession({ status: 'thinking', groups: GROUPS }));
+    expect(screen.getByRole('complementary', { name: 'Current collection' })).toBe(panel);
+    await fireSessionChange(baseSession({ groups: [...GROUPS, { uid: 'food', title: 'Food', color: 'red', tabs: [{ uid: 'food1', title: 'Local food', url: 'https://example.com' }] }] }));
+    expect(screen.getByText('Local food').closest('aside')).toBe(panel);
+});
+
+test('choosing the planner alone does not open an empty side panel', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ messages: [{ id: 'm', role: 'user', content: 'Plan something' }] }) }) });
+    await renderPanel({ hub: { activeTool: 'task-planner', collections: [] } });
+    expect(screen.queryByRole('complementary', { name: 'Current collection' })).not.toBeInTheDocument();
+});
+
+test('welcome has three starting prompts and hides contextual suggestions during review', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession() }) });
+    await renderPanel({ hub: { collections: [] } });
+    expect(screen.getByRole('heading', { name: 'What would you like to do?' })).toBeVisible();
+    expect(document.querySelectorAll('.ai-hub-start-prompts button')).toHaveLength(4);
+    expect(document.querySelector('.ai-hub-welcome')).not.toBeNull();
+    expect(screen.queryByLabelText('Suggested next actions')).not.toBeInTheDocument();
+});
+
+test('New chat resets persisted conversation, clears the draft, and returns the hub home', async () => {
+    const onReset = jest.fn();
+    mockMessages({ taskPlannerStart: msg => ({ ok: true, state: msg.payload?.force ? baseSession({ sessionId: 'fresh' }) : baseSession({ messages: [{ id: 'old', role: 'user', content: 'Old request' }] }) }) });
+    await renderPanel({ hub: { collections: [], onReset } });
+    fireEvent.change(screen.getByLabelText('Message Tabox AI'), { target: { value: 'Unsent draft' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'New Chat' })); });
+    expect(sentMessages('taskPlannerReset')).toHaveLength(1);
+    expect(screen.queryByText('Old request')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Message Tabox AI')).toHaveValue('');
+    expect(onReset).toHaveBeenCalledTimes(1);
+});
+
+test('New chat is disabled while an AI action is running', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession() }) });
+    await renderPanel({ hub: { collections: [], busy: true } });
+    expect(screen.getByRole('button', { name: 'New Chat' })).toBeDisabled();
+});
+
+test('a failed chat reset keeps the conversation and reports the error', async () => {
+    const onReset = jest.fn();
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ messages: [{ id: 'old', role: 'user', content: 'Old request' }] }) }), taskPlannerReset: () => ({ ok: false, error: 'Storage unavailable' }) });
+    await renderPanel({ hub: { collections: [], onReset } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'New Chat' })); });
+    expect(screen.getByText('Old request')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Storage unavailable');
+    // The clear is optimistic (instant new chat), so the hub reset already ran;
+    // the failure restores the transcript.
+    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(sentMessages('taskPlannerStart')).toHaveLength(1);
+});
+
+test('hub keeps contextual pills after the first message and sends a grounded action', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ messages: [{ id: 'm', role: 'user', content: 'Hello' }], pills: [] }) }) });
+    await renderPanel({ hub: { activeTool: 'auto-rename', collections: [{ uid: 'big', name: 'Research', tabs: Array.from({ length: 42 }, () => ({ url: 'https://example.com' })) }], scope: { type: 'all' }, onAction: jest.fn() } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Split Research/ })); });
+    expect(sentMessages('taskPlannerSend')[0].payload).toMatchObject({ hub: true, action: { tool: 'split-collection', uids: ['big'] } });
+});
+
+test('hub renders another tool inside the same conversation and preserves the composer', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ messages: [{ id: 'm', role: 'user', content: 'Keep my transcript' }] }) }) });
+    await renderPanel({ hub: { activeTool: 'split-collection', collections: [], panel: <button>Review split</button>, onAction: jest.fn() } });
+    expect(screen.getByText('Keep my transcript')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Review split' }).closest('.tp-messages')).not.toBeNull();
+    expect(document.querySelector('.ai-hub-review')).toBeNull();
+    expect(screen.getByLabelText('Message Tabox AI')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save collection' })).not.toBeInTheDocument();
+});
+
+test('hub shows thinking before revealing its inline action card', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ status: 'thinking' }) }) });
+    await renderPanel({ hub: { activeTool: 'auto-rename', collections: [], panel: <button>Rename now</button>, onAction: jest.fn() } });
+    expect(screen.getByTestId('tp-thinking')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename now' })).not.toBeInTheDocument();
+    await fireSessionChange(baseSession({ status: 'ready', messages: [{ id: 'answer', role: 'assistant', content: 'I can name those collections.' }] }));
+    expect(screen.getByRole('button', { name: 'Rename now' }).closest('.tp-messages')).not.toBeNull();
+});
+
+test('find-tab results render under the reply and open the saved tab on click', async () => {
+    const tabResults = [
+        { collectionUid: 'c1', collectionName: 'Work', title: 'Interview notes - Dima Aluf', url: 'https://docs.google.com/d/1', favIconUrl: 'https://docs.google.com/favicon.ico' },
+        { collectionUid: 'c2', collectionName: 'Fun', title: 'Recipes', url: 'https://example.com/aluf', favIconUrl: null },
+    ];
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({
+        hubAction: { id: 'q', tool: 'find-tab', query: 'aluf' },
+        messages: [{ id: 'q', role: 'user', content: 'find aluf' }, { id: 'a', role: 'assistant', content: 'Here is what I found.', tabResults }],
+    }) }) });
+    const onAction = jest.fn();
+    browser.tabs.create = jest.fn().mockResolvedValue({});
+    await renderPanel({ hub: { collections: [], panel: <button>Rename now</button>, onAction } });
+    const list = screen.getByTestId('tp-tab-results');
+    const rows = list.querySelectorAll('.tp-tab-result');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent('Interview notes - Dima Aluf');
+    expect(rows[0]).toHaveTextContent('Work');
+    fireEvent.click(rows[0]);
+    expect(browser.tabs.create).toHaveBeenCalledWith({ url: 'https://docs.google.com/d/1' });
+    // find-tab is card-less like clarify: no tool is adopted, no panel shown.
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Rename now' })).not.toBeInTheDocument();
+});
+
+test('hub welcome offers a find-a-tab prompt that routes straight to find-tab', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession() }) });
+    await renderPanel({ hub: { collections: [], onAction: jest.fn() } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find a saved tab' }));
+    await waitFor(() => expect(sentMessages('taskPlannerSend')).toHaveLength(1));
+    expect(sentMessages('taskPlannerSend')[0].payload).toMatchObject({ hub: true, text: 'Find a saved tab', action: { tool: 'find-tab', uids: [] } });
+});
+
+test('a plain chat answer does not attach the previous action card', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ hubAction: { id: 'answer', tool: 'clarify' }, messages: [{ id: 'answer', role: 'assistant', content: 'You have seven collections.' }] }) }) });
+    await renderPanel({ hub: { activeTool: 'auto-rename', collections: [], panel: <button>Rename now</button>, onAction: jest.fn() } });
+    expect(screen.getByText('You have seven collections.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename now' })).not.toBeInTheDocument();
+});
+
+test('sharing from the hub stays inside its review area instead of opening another modal', async () => {
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ linkedCollectionUid: 'c1', messages: [{ id: 'saved', role: 'assistant', content: 'Saved', offer: true }] }) }) });
+    loadSingleCollection.mockResolvedValue({ uid: 'c1', name: 'Research', tabs: [] });
+    const { store } = await renderPanel({ hub: { activeTool: 'task-planner', collections: [], onAction: jest.fn() } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Share via link/ })); });
+    expect(store.get(shareCollectionLinkModalState)).toBeNull();
+    expect(screen.getByRole('region', { name: 'Share Research via link' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Message Tabox AI')).toBeInTheDocument();
+});
+
+test('a slow suggestion reply cannot replace newer conversation events', async () => {
+    let finish;
+    mockMessages({ taskPlannerStart: () => ({ ok: true, state: baseSession({ pills: ['Plan a trip'] }) }), taskPlannerRefreshPills: () => new Promise(resolve => { finish = resolve; }) });
+    await renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'New ideas' }));
+    await fireSessionChange(baseSession({ status: 'thinking', messages: [{ id: 'new', role: 'user', content: 'My newer request' }], updatedAt: 20 }));
+    await act(async () => { finish({ ok: true, state: baseSession({ updatedAt: 10 }) }); });
+    expect(screen.getByText('My newer request')).toBeInTheDocument();
+    expect(screen.getByLabelText('Message Tabox AI')).toBeDisabled();
 });
 
 test('renders the greeting and shimmer skeleton pills while pills are loading', async () => {

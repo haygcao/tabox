@@ -1,3 +1,5 @@
+import { SPLIT_MIN_TABS } from './utils/sharedConstants';
+import AIHubActionCard from './ai/AIHubActionCard';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Modal from 'react-modal';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
@@ -31,6 +33,7 @@ import { UNDO_TIME } from './constants';
 import { browser } from '../static/globals';
 import './Modal.css';
 import './AIToolsModal.css';
+import './ai/AIHub.css';
 
 // Map a service-worker aiTaskState.type to the modal's activeToolId, so a
 // reopened popup can auto-navigate to the running task's panel.
@@ -44,7 +47,14 @@ const TASK_TO_TOOL = {
 
 function AIToolsModal({ updateRemoteData, onDataUpdate }) {
     const [isOpen, setIsOpen] = useAtom(aiToolsModalOpenState);
-    const scope = useAtomValue(aiToolsScopeState);
+    const [scope, setScope] = useAtom(aiToolsScopeState);
+    const [hubTargetUids, setHubTargetUids] = useState(null);
+    const [showActions, setShowActions] = useState(false);
+    const [hubRequest, setHubRequest] = useState(null);
+    const [planningLayout, setPlanningLayout] = useState(false);
+    const [hubThinking, setHubThinking] = useState(false);
+    const [hubHeaderSlot, setHubHeaderSlot] = useState(null);
+    const explicitRouteRef = useRef(false);
     const viewContext = useAtomValue(viewContextState);
     const setAiProcessingUids = useSetAtom(aiProcessingUidsState);
     const setAiProcessingCurrentUid = useSetAtom(aiProcessingCurrentUidState);
@@ -152,7 +162,13 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
         setAiProcessingCurrentUid(null);
         // Reset all panel state
         setCollections([]);
+        explicitRouteRef.current = Boolean(initialTool || splitTarget);
         setActiveToolId(null);
+        setHubTargetUids(null);
+        setShowActions(false);
+        setHubRequest(null);
+        setPlanningLayout(false);
+        setHubThinking(false);
         setPanelStatus('idle');
         setRenameResults([]);
         setSkipped([]);
@@ -353,8 +369,11 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
         })();
 
         const onChanged = (changes, area) => {
-            if (area !== 'local' || !changes.aiTaskState) return;
-            setAiTaskState(changes.aiTaskState.newValue || null);
+            if (area !== 'local') return;
+            if (Object.keys(changes).some(key => key === 'collections_index' || key.startsWith('collection_'))) {
+                loadAllCollections().then(fresh => { if (!cancelled) setCollections(fresh); }).catch(() => {});
+            }
+            if (changes.aiTaskState) setAiTaskState(changes.aiTaskState.newValue || null);
         };
         browser.storage.onChanged.addListener(onChanged);
         return () => {
@@ -386,9 +405,11 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
     const nameableCollections = collections.filter((c) => (c.tabs || []).length > 0);
 
     // Apply scope filter
-    const targets = scope.type === 'selected'
-        ? nameableCollections.filter((c) => scope.uids.includes(c.uid))
-        : nameableCollections;
+    const targets = hubTargetUids
+        ? nameableCollections.filter(c => hubTargetUids.includes(c.uid))
+        : scope.type === 'selected'
+            ? nameableCollections.filter((c) => scope.uids.includes(c.uid))
+            : nameableCollections;
 
     // Auto-Arrange operates on root (loose) collections only.
     const rootCollections = collections.filter((c) => (c.parentId ?? null) === null);
@@ -847,7 +868,7 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
         dupRunStartedAtRef.current = Date.now();
 
         // Pass uids from scope; empty array means "scan all"
-        const uids = scope.type === 'selected' ? scope.uids : [];
+        const uids = hubTargetUids || (scope.type === 'selected' ? scope.uids : []);
         dispatchAiRun('duplicate-sweep', { uids }).catch((runError) => {
             console.error('Tabox AI: aiRun(duplicate-sweep) dispatch failed:', runError);
             setError('An unexpected error occurred. Please try again.');
@@ -911,47 +932,54 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
         ? aiTaskState.currentLabel
         : 'Organizing tabs…';
 
-    return (
-        <Modal
-            isOpen={isOpen}
-            onRequestClose={busy ? undefined : close}
-            contentLabel="Tabox AI Tools"
-            className={`modal-content ai-tools-modal${viewContext === 'fullpage' ? ' ai-tools-modal--fullpage' : ''}${activeToolId === 'task-planner' ? ' ai-tools-modal--planner' : ''}`}
-            overlayClassName="modal-overlay ai-tools-modal-overlay"
-            ariaHideApp={false}
-            shouldCloseOnOverlayClick={!busy}
-            shouldCloseOnEsc={!busy}
-        >
-            <div className={`ai-tools-modal-content${showProUpsell ? ' ai-tools-modal-content--upsell' : ''}`}>
-                <div className="ai-tools-modal-header">
-                    <div className="ai-tools-modal-title">
-                        {activeToolId ? (
-                            <button
-                                type="button"
-                                className="ai-tools-back"
-                                onClick={() => !busy && setActiveToolId(null)}
-                                aria-label="Back to tools"
-                                disabled={busy}
-                            >
-                                <MdArrowBack size={18} />
-                            </button>
-                        ) : (
-                            <BsStars className="ai-tools-title-icon" size={18} />
-                        )}
-                        <span>{activeTool?.title || 'Tabox AI'}</span>
-                    </div>
-                    <button className="ai-tools-modal-close" onClick={close} type="button" disabled={busy} aria-label="Close">
-                        <MdClose />
-                    </button>
-                </div>
-
-                {!activeToolId && (
+    const hubBusy = busy || aiTaskState?.status === 'running';
+    const adoptHubAction = useCallback((action) => {
+        if (aiTaskState?.status === 'running') return;
+        if (action.restoring && explicitRouteRef.current) return;
+        setShowActions(false);
+        setError(null);
+        setPanelStatus('idle');
+        runStartedRef.current = false;
+        if (action.tool !== activeToolId) setAiTaskState(null);
+        setHubTargetUids(previous => action.uids?.length ? action.uids : action.tool === activeToolId ? previous : null);
+        setActiveToolId(action.tool);
+        if (action.restoring) {
+            // Reopen the existing review; never pay for another scan just
+            // because its observer was closed. Ignore older unrelated runs.
+            setSplitTarget(null);
+            const token = runTokenRef.current;
+            browser.runtime.sendMessage({ type: 'aiGetState' }).then(state => {
+                if (token !== runTokenRef.current || !state || TASK_TO_TOOL[state.type] !== action.tool || state.startedAt < action.requestedAt) return;
+                completedTaskIdRef.current = state.taskId;
+                setAiTaskState(state);
+            }).catch(() => {});
+            return;
+        }
+        if (action.tool === 'split-collection' && action.uids?.length) {
+            splitScanStartedRef.current = false;
+            setSplitTarget({ uid: action.uids[0] });
+        }
+    }, [aiTaskState?.status, setSplitTarget, activeToolId]);
+    const chooseHubTool = (tool) => {
+        if (hubBusy || hubThinking) return;
+        const definition = AI_TOOLS.find(t => t.id === tool);
+        setActiveToolId(tool);
+        if (tool !== activeToolId) setAiTaskState(null);
+        setPanelStatus('idle');
+        setError(null);
+        setShowActions(false);
+        setHubTargetUids(null);
+        runStartedRef.current = false;
+        if (isPro) setHubRequest({ id: Date.now(), tool, uids: [], label: definition?.title || tool });
+    };
+    const toolMenu = <>
+                {((!isPro && !activeToolId) || showActions) && (
                     <div className="ai-tools-list">
                         {AI_TOOLS.filter((t) => t.featured).map((tool) => {
                             const ToolIcon = tool.icon;
                             const HeroIcon = tool.heroIcon;
                             return (
-                                <button key={tool.id} type="button" className="ai-hero-card" data-tool-id={tool.id} onClick={() => setActiveToolId(tool.id)}>
+                                <button key={tool.id} type="button" className="ai-hero-card" data-tool-id={tool.id} onClick={() => chooseHubTool(tool.id)}>
                                     {isToolLocked(tool) && <MdLock className="ai-tool-lock" data-testid="ai-tool-lock" />}
                                     {HeroIcon
                                         ? <HeroIcon className="ai-hero-icon" />
@@ -966,9 +994,9 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                         <div className="ai-tools-grid">
                             {AI_TOOLS.filter((t) => !t.featured).map((tool) => {
                                 const ToolIcon = tool.icon;
-                                const disabled = tool.id === 'auto-arrange-folders' && rootCollections.length === 0;
+                                const disabled = tool.id === 'auto-arrange-folders' && (rootCollections.length === 0 || scope.type === 'selected');
                                 const tooltipHtml = disabled
-                                    ? '<div class="ai-tool-tip"><span class="ai-tool-tip-desc">No collections at the top level to arrange</span></div>'
+                                    ? `<div class="ai-tool-tip"><span class="ai-tool-tip-desc">${scope.type === 'selected' ? 'Choose All collections to arrange your loose collections' : 'No collections at the top level to arrange'}</span></div>`
                                     : `<div class="ai-tool-tip"><span class="ai-tool-tip-title">${tool.title}</span><span class="ai-tool-tip-desc">${tool.description}</span></div>`;
                                 return (
                                     <button
@@ -976,8 +1004,7 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                                         type="button"
                                         className="ai-tool-card"
                                         data-tool-id={tool.id}
-                                        onClick={() => setActiveToolId(tool.id)}
-                                        disabled={disabled}
+                                        onClick={() => chooseHubTool(tool.id)}
                                         data-tooltip-id="main-tooltip"
                                         data-tooltip-html={tooltipHtml}
                                         data-tooltip-place="bottom"
@@ -1000,21 +1027,8 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                     </div>
                 )}
 
-                {showProUpsell && (
-                    <TaboxProUpsell
-                        isSignedIn={isSignedIn}
-                        onUpgrade={() => startProCheckout()}
-                        onSignIn={async () => {
-                            const loggedIn = await browser.runtime.sendMessage({ type: 'login' });
-                            if (!loggedIn) return;
-                            setIsSignedIn(true);
-                            const entitlement = await browser.runtime.sendMessage({ type: 'refreshProEntitlement' });
-                            if (entitlement && !entitlement.authError) setPremiumEntitlement(entitlement);
-                        }}
-                        onEntitlementRefreshed={setPremiumEntitlement}
-                    />
-                )}
-
+    </>;
+    const toolPanel = <>
                 {activeToolId && !showProUpsell && (
                     <>
                 {activeToolId === 'smart-organize' && (
@@ -1353,7 +1367,7 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                                     type="button"
                                     className="ai-tool-action-btn"
                                     onClick={handleAutoArrangeRun}
-                                    disabled={rootCollections.length === 0}
+                                    disabled={rootCollections.length === 0 || scope.type === 'selected'}
                                 >
                                     <BsStars size={14} style={{ marginRight: '6px' }} />
                                     Arrange now
@@ -1467,17 +1481,12 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                     </div>
                 )}
 
-                {activeToolId === 'task-planner' && (
-                    <div className="ai-tool-panel ai-tool-panel--planner">
-                        <TaskPlannerPanel updateRemoteData={updateRemoteData} onDataUpdate={onDataUpdate} />
-                    </div>
-                )}
-
                 {activeToolId === 'split-collection' && (
                     <div className="ai-tool-panel ai-tool-panel--split">
                         {error && <div className="ai-tool-error">{error}</div>}
                         <SplitCollectionPanel
-                            collections={collections}
+                            compact
+                            collections={scope.type === 'selected' ? collections.filter(c => scope.uids.includes(c.uid)) : collections}
                             target={splitTarget}
                             aiTaskState={aiTaskState}
                             busy={busy}
@@ -1489,6 +1498,128 @@ function AIToolsModal({ updateRemoteData, onDataUpdate }) {
                 )}
                     </>
                 )}
+
+    </>;
+
+    const completed = panelStatus === 'done' && ['auto-rename', 'auto-arrange-folders', 'smart-organize'].includes(activeToolId) && !error;
+    const primaryAction = hubBusy ? { label: 'Cancel', onClick: handleCancel, disabled: isCancelling } : completed ? (
+        activeToolId === 'auto-rename' ? { label: 'Undo all', onClick: handleUndoAll, disabled: !renameUndoUids.length || revertingUids.length > 0 }
+            : activeToolId === 'auto-arrange-folders' ? { label: 'Undo', onClick: handleAutoArrangeUndo }
+                : { label: 'Undo', onClick: handleSmartOrganizeUndoLast }
+    ) : panelStatus === 'idle' ? ({
+        'auto-rename': { label: `Auto-rename ${n} collection${n === 1 ? '' : 's'}`, onClick: handleRun, disabled: n === 0 },
+        'auto-arrange-folders': { label: 'Arrange now', onClick: handleAutoArrangeRun, disabled: !rootCollections.length || scope.type === 'selected' },
+        'duplicate-sweep': { label: 'Scan for duplicate tabs', onClick: handleDuplicateSweepRun },
+        'smart-organize': soStructure ? { label: 'Organize now', onClick: handleSmartOrganizeRun, disabled: !soStructure.eligibleCount } : null,
+    })[activeToolId] : null;
+    const compactTitle = error || (hubBusy ? (progressLabel || 'Working on your request…') : completed ? (
+        activeToolId === 'auto-rename' ? `${renameResults.filter(r => !r.reverted).length} collections renamed`
+            : activeToolId === 'auto-arrange-folders' ? aaSummary || 'Collections organized'
+                : 'Your tabs are grouped'
+    ) : activeToolId === 'auto-arrange-folders' ? `${rootCollections.length} loose collections`
+        : activeToolId === 'auto-rename' ? `${n} collections to name` : activeTool?.title);
+    const unavailable = !hubBusy && panelStatus === 'idle' ? (error || (
+        activeToolId === 'smart-organize' && soStructure?.eligibleCount === 0 ? 'All your tabs in this window are already grouped. Open some ungrouped tabs and I can organize them for you.'
+            : activeToolId === 'auto-rename' && n === 0 ? (idleDisabledHint || 'There are no collections with tabs to rename.')
+                : activeToolId === 'auto-arrange-folders' && scope.type === 'selected' ? 'Folder organization works on all loose collections. Switch the context to All collections to use it.'
+                    : activeToolId === 'auto-arrange-folders' && rootCollections.length === 0 ? 'Your collections are already in folders. There are no loose collections to organize.'
+                        : activeToolId === 'duplicate-sweep' && n === 0 ? 'There are no saved tabs in this context to check for duplicates.'
+                            : activeToolId === 'split-collection' && !collections.some(c => (scope.type !== 'selected' || scope.uids.includes(c.uid)) && (c.tabs || []).length >= SPLIT_MIN_TABS) ? `There are no collections with at least ${SPLIT_MIN_TABS} tabs in this context to split.` : null
+    )) : null;
+    const compactPanel = activeToolId === 'split-collection' || (activeToolId === 'smart-organize' && !soStructure && !hubBusy)
+        ? toolPanel
+        : <AIHubActionCard key={`${activeToolId}:${panelStatus}`} title={compactTitle} done={completed}
+            description={activeToolId === 'auto-arrange-folders' && panelStatus === 'idle' ? 'Group by topic using existing or new folders.' : null}
+            primary={primaryAction}>{toolPanel}</AIHubActionCard>;
+
+    return (
+        <Modal
+            isOpen={isOpen}
+            closeTimeoutMS={(typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) || document.documentElement.classList.contains('performance-mode') ? 0 : 180}
+            onRequestClose={close}
+            contentLabel="Tabox AI Tools"
+            className={`modal-content ai-tools-modal ai-tools-modal--hub${viewContext === 'fullpage' ? ' ai-tools-modal--fullpage' : ''}${activeToolId === 'task-planner' ? ' ai-tools-modal--planner' : ''}${planningLayout ? ' ai-tools-modal--planning' : ''}`}
+            overlayClassName="modal-overlay ai-tools-modal-overlay"
+            ariaHideApp={false}
+            shouldCloseOnOverlayClick={true}
+            shouldCloseOnEsc={true}
+        >
+            <div className={`ai-tools-modal-content${showProUpsell ? ' ai-tools-modal-content--upsell' : ''}`}>
+                <div className="ai-tools-modal-header">
+                    <div className="ai-tools-modal-title">
+                        {activeToolId && !isPro ? (
+                            <button
+                                type="button"
+                                className="ai-tools-back"
+                                onClick={() => !hubBusy && setShowActions(value => !value)}
+                                aria-label="Back to tools"
+                                disabled={busy}
+                            >
+                                <MdArrowBack size={18} />
+                            </button>
+                        ) : (
+                            <BsStars className="ai-tools-title-icon" size={18} />
+                        )}
+                        <span>Tabox AI</span>{showProUpsell && <span className="ai-hub-locked-label">{activeTool?.title}</span>}
+                        {isPro && !showProUpsell && <span className="ai-hub-header-slot" ref={setHubHeaderSlot} />}
+                    </div>
+                    <button className="ai-tools-modal-close" onClick={close} type="button" aria-label="Close">
+                        <MdClose />
+                    </button>
+                </div>
+
+                {!isPro && toolMenu}
+
+                {showProUpsell && (
+                    <TaboxProUpsell
+                        isSignedIn={isSignedIn}
+                        onUpgrade={() => startProCheckout()}
+                        onSignIn={async () => {
+                            const loggedIn = await browser.runtime.sendMessage({ type: 'login' });
+                            if (!loggedIn) return;
+                            setIsSignedIn(true);
+                            const entitlement = await browser.runtime.sendMessage({ type: 'refreshProEntitlement' });
+                            if (entitlement && !entitlement.authError) setPremiumEntitlement(entitlement);
+                        }}
+                        onEntitlementRefreshed={setPremiumEntitlement}
+                    />
+                )}
+
+                {isPro && <TaskPlannerPanel updateRemoteData={updateRemoteData} onDataUpdate={onDataUpdate}
+                    hub={{ activeTool: activeToolId, collections, scope, busy: hubBusy, headerSlot: hubHeaderSlot, onAction: adoptHubAction, onActivityChange: setHubThinking,
+                        onReset: () => {
+                            explicitRouteRef.current = false;
+                            setActiveToolId(null);
+                            setHubRequest(null);
+        setPlanningLayout(false);
+                            setHubTargetUids(null);
+                            setShowActions(false);
+                            setAiTaskState(null);
+                            setSplitTarget(null);
+                            setPanelStatus('idle');
+                            setError(null);
+                            runStartedRef.current = false;
+                            splitScanStartedRef.current = false;
+                        },
+                        request: hubRequest,
+                        unavailable, onPlanningLayout: setPlanningLayout,
+                        panel: !unavailable && activeToolId && activeToolId !== 'task-planner' ? compactPanel : null,
+                        completed, showActions, onToggleActions: () => setShowActions(value => !value),
+                        actions: toolMenu,
+                        // Scope chip: shown only when the AI is narrowed to a
+                        // selection or a targeted collection. Its × is the one
+                        // escape hatch back to the whole library.
+                        toolbar: (scope.type === 'selected' || hubTargetUids) ? <div className="ai-hub-toolbar">
+                            <span className="ai-hub-scope-chip" data-tooltip-id="main-tooltip" data-tooltip-content="Tabox AI is working on these collections only">
+                                <span className="ai-hub-scope-chip-label">{hubTargetUids
+                                    ? (hubTargetUids.length === 1 ? collections.find(c => c.uid === hubTargetUids[0])?.name || '1 collection' : `${hubTargetUids.length} collections`)
+                                    : `${scope.uids.length} selected collection${scope.uids.length === 1 ? '' : 's'}`}</span>
+                                <button type="button" className="ai-hub-scope-chip-clear" aria-label="Use all collections" disabled={hubBusy || hubThinking}
+                                    data-tooltip-id="main-tooltip" data-tooltip-content="Use all collections"
+                                    onClick={() => { setScope({ type: 'all' }); setHubTargetUids(null); }}><MdClose size={12} /></button>
+                            </span>
+                        </div> : null,
+                    }} />}
 
                 <p className="ai-tools-disclaimer">
                     {activeToolId === 'smart-organize' && panelStatus === 'done'

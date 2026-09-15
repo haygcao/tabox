@@ -2608,6 +2608,10 @@ try {
       const payload = request.payload || {};
       return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerStart({
         force: !!payload.force,
+        // Reply as soon as the session exists — opening the hub and "New Chat"
+        // must never wait on the suggestion-pill AI call. Pills keep generating
+        // here in the worker and land via storage.onChanged.
+        deferPills: true,
         // Loose-collection summaries seed the suggestion pills; 3 titles per
         // collection is plenty — pills need themes, not full contents.
         loadSummaries: () => loadLooseCollectionSummariesBG(3),

@@ -1,0 +1,392 @@
+/* One continuous shell; only newly arriving content enters. Never animate
+   the transcript on a tool change or move the composer under the pointer. */
+.ai-hub-conversation { --hub-out: cubic-bezier(.22, 1, .36, 1); }
+/* +12px over the old 72vh so the context dropdown below the composer clears the card's bottom edge. */
+.ai-hub-conversation .tp-layout { height: min(612px, 74vh); gap: 18px; }
+.ai-hub-conversation .tp-chat { flex: 1 1 52%; }
+.ai-hub-conversation .tp-messages { gap: 16px; padding: 12px 4px; }
+.ai-hub-conversation .tp-bubble { font-size: 13px; line-height: 1.6; }
+.ai-hub-action-card { flex: 0 0 auto; min-width: 0; margin: 0 0 8px 32px; padding: 16px; border: 1px solid rgba(128,128,160,.2); border-radius: 14px; background: rgba(128,128,160,.04); }
+.ai-hub-action-card h3 { font-size: 13px; margin: 0 0 12px; }
+.ai-hub-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ai-hub-action-card .ai-tool-panel { overflow: auto; min-height: 0; }
+.ai-hub-suggestions { flex: 0 0 auto; padding: 6px 0; }
+.ai-hub-suggestions-label { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-color); opacity: .7; margin-bottom: 5px; }
+.ai-hub-pill { font-weight: 400; font-size: 11px; border: 1px solid rgba(128,128,180,.18); box-shadow: 0 3px 9px rgba(0,0,0,.04); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-hub-toolbar { display: flex; align-items: center; gap: 8px; }
+.ai-hub-scope-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; font-size: 11px; color: var(--text-color); background: rgba(128,128,160,.07); border: 1px solid rgba(128,128,160,.2); border-radius: 999px; padding: 3px 4px 3px 10px; }
+.ai-hub-scope-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-hub-scope-chip-clear { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; opacity: .7; cursor: pointer; }
+.ai-hub-scope-chip-clear:hover:not(:disabled) { opacity: 1; background: rgba(128,128,160,.18); }
+.ai-hub-scope-chip-clear:disabled { opacity: .35; cursor: default; }
+.ai-hub-conversation .tp-composer { border-radius: 12px; }
+.ai-hub-conversation .tp-tabs-panel { flex: 1 1 48%; width: auto; }
+.ai-tools-modal--hub { max-width: 640px; --hub-out: cubic-bezier(.22, 1, .36, 1); }
+.ai-tools-modal--hub.ai-tools-modal--fullpage { max-width: min(760px, 94vw); }
+.ai-tools-modal--hub .ai-tools-modal-content::before { display: none; }
+.ai-tools-modal--hub .ai-tools-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ai-tools-modal--hub .ai-tools-grid { display: contents; }
+.ai-tools-modal--hub .ai-hero-card, .ai-tools-modal--hub .ai-tool-card { grid-column: auto; display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; min-height: 60px; padding: 10px 14px; border: 1px solid rgba(128,128,160,.18); border-radius: 10px; background: rgba(128,128,160,.05); box-shadow: none; text-align: left; }
+/* Featured tools (Task Planner, Smart Tab Grouping) behave exactly like the
+ * other action rows in the hub: no always-on glow pulse, no permanent gradient
+ * ring — just the same half-circling arc on hover, over a slightly warmer
+ * indigo tint so they still read as the two headline actions. */
+.ai-tools-modal--hub .ai-hero-card { animation: none; isolation: isolate; transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease; }
+.ai-tools-modal--hub .ai-hero-card::before {
+    content: '';
+    display: block;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 2px;
+    background: conic-gradient(
+        from var(--tabox-card-angle),
+        transparent 0deg,
+        #4361ee 12deg,
+        #8b5cf6 48deg,
+        #22d3ee 78deg,
+        transparent 92deg,
+        transparent 360deg
+    );
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: destination-out;
+    mask-composite: exclude;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 1;
+    transition:
+        --tabox-card-angle 0.45s cubic-bezier(0.645, 0.045, 0.355, 1),
+        opacity 0.2s ease;
+}
+.ai-tools-modal--hub .ai-hero-card:hover::before { opacity: 1; --tabox-card-angle: 180deg; }
+[data-theme="dark"] .ai-tools-modal--hub .ai-hero-card::before {
+    background: conic-gradient(
+        from var(--tabox-card-angle),
+        transparent 0deg,
+        #7e93ff 12deg,
+        #a78bfa 48deg,
+        #38bdf8 78deg,
+        transparent 92deg,
+        transparent 360deg
+    );
+}
+.ai-tools-modal--hub .ai-hero-description { display: none; }
+.ai-tools-modal--hub .ai-hero-text { gap: 0; }
+.ai-tools-modal--hub .ai-hero-title, .ai-tools-modal--hub .ai-tool-card-title { font-size: 12.5px; font-weight: 600; line-height: 1.3; text-align: left; }
+/* Fixed 4:3 icon box (matches the 40x30 viewBox of the storytelling SVGs) so
+ * every label starts at the same x and every icon is vertically centered.
+ * react-icons (square viewBox) scale to fit the height and center in the box. */
+.ai-tools-modal--hub .ai-hero-icon, .ai-tools-modal--hub .ai-tool-card-icon { width: 48px; height: 36px; min-width: 48px; flex: 0 0 48px; margin: 0; display: block; }
+@keyframes hub-arrive { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes hub-overlay-arrive { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+    .ai-hub-action-card { animation: hub-arrive 240ms var(--hub-out) both; }
+    .ai-hub-pill { animation: hub-arrive 180ms var(--hub-out) both; }
+    .ai-hub-conversation button { transition: background-color 140ms ease, opacity 140ms ease, transform 140ms ease; }
+    .ai-hub-conversation button:active:not(:disabled) { transform: scale(.98); }
+    .ai-tools-modal-overlay { animation: hub-overlay-arrive 220ms cubic-bezier(.22,1,.36,1) both; transition: opacity 180ms cubic-bezier(.22,1,.36,1); }
+    .ai-tools-modal--hub { animation: hub-arrive 220ms cubic-bezier(.22,1,.36,1) both; }
+    .ai-hub-conversation .ai-tool-panel > *, .ai-hub-conversation .split-card, .ai-hub-conversation .split-card-tabs, .ai-hub-conversation .ai-tools-list { animation: hub-arrive 220ms var(--hub-out) both; }
+    .ai-tools-modal-overlay.ReactModal__Overlay--before-close { animation: none; opacity: 0; }
+    .ReactModal__Overlay--before-close .ai-tools-modal--hub { animation: none; opacity: 0; transform: translateY(6px); transition: opacity 180ms var(--hub-out), transform 180ms var(--hub-out); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ai-tools-modal--hub, .ai-tools-modal--hub *, .ai-tools-modal-overlay { animation: none; transition: none; scroll-behavior: auto; }
+}
+html.performance-mode .ai-tools-modal--hub,
+html.performance-mode .ai-tools-modal--hub *,
+html.performance-mode .ai-tools-modal-overlay { animation: none; transition: none; scroll-behavior: auto; }
+
+/* A single transcript owns scrolling, including every action and plan. */
+.ai-tools-modal--hub .tp-layout { display: flex; flex-direction: column; height: min(600px, 70vh); }
+.ai-hub-conversation .tp-chat { flex: 1; min-height: 0; }
+.ai-hub-conversation .tp-messages > * { flex-shrink: 0; }
+.ai-hub-action-card .ai-tool-panel, .ai-hub-action-card .tp-tabs-panel,
+.ai-hub-action-card .tp-groups, .ai-hub-action-card .tp-picker-list,
+.ai-hub-action-card .split-card-tabs { overflow: visible; max-height: none; height: auto; }
+.ai-hub-action-card .tp-tabs-panel { width: 100%; border: 0; background: transparent; }
+.ai-hub-conversation .tp-msg--assistant .tp-bubble { background: transparent; border: 0; box-shadow: none; padding-left: 0; }
+.ai-hub-conversation .tp-msg { animation-delay: 0s !important; }
+.ai-hub-conversation .tp-composer { flex-shrink: 0; }
+
+.ai-hub-action-card .split-scroll, .ai-hub-action-card .dup-sweep-scroll { overflow: visible; }
+
+.ai-hub-chat-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-hub-chat-toolbar > .tp-new-plan-btn { margin-left: auto; white-space: nowrap; }
+
+/* Quiet chat: the composer is the only persistent control surface. */
+.ai-tools-modal--hub .ai-tools-modal-content { position: relative; }
+.ai-tools-modal--hub .ai-tools-disclaimer { display: none; }
+.ai-hub-conversation .tp-avatar { display: none; }
+.ai-hub-conversation .tp-messages { gap: 22px; padding: 20px 8px; }
+.ai-hub-conversation .tp-bubble { font-size: 14px; line-height: 1.65; }
+.ai-hub-conversation .tp-msg--assistant { align-self: stretch; }
+.ai-hub-conversation .tp-msg--assistant .tp-bubble { max-width: 100%; }
+.ai-hub-conversation .tp-composer { position: relative; isolation: isolate; align-items: center; min-height: 54px; padding: 8px; border-radius: 16px; }
+.ai-hub-more { display: flex; align-items: center; justify-content: center; flex: 0 0 32px; height: 32px; border: 0; background: transparent; color: var(--text-color); border-radius: 8px; cursor: pointer; }
+.ai-hub-conversation .tp-send-btn { border-radius: 50%; }
+.ai-hub-chat-toolbar:empty { display: none; }
+.ai-hub-chat-toolbar { min-height: 0; padding-bottom: 8px; }
+.ai-hub-welcome-copy { margin: auto 0; padding: 30px 16px; text-align: center; }
+.ai-hub-welcome-copy h2 { font-size: 22px; font-weight: 550; letter-spacing: -.5px; margin: 0 0 12px; }
+.ai-hub-welcome-copy p { font-size: 13px; opacity: .65; margin: 0 0 24px; }
+.ai-hub-start-prompts { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.ai-hub-start-prompts .tp-pill { font-size: 12px; padding: 10px 14px; border-radius: 12px; background: rgba(128,128,160,.04); }
+/* Negative inset must exceed .ai-tools-modal-content padding (16px) + border so the glow reaches the card frame; the modal's overflow:hidden rounded edge clips it. */
+.ai-hub-conversation .tp-composer::before { content: ''; position: absolute; z-index: -1; pointer-events: none; inset: -95px -40px -40px; opacity: 0; background: radial-gradient(ellipse at 15% 100%, rgba(139,93,255,.45), transparent 55%), radial-gradient(ellipse at 52% 100%, rgba(22,152,226,.4), transparent 60%), radial-gradient(ellipse at 92% 100%, rgba(255,140,66,.34), transparent 50%); }
+.ai-hub-welcome .tp-composer::before { opacity: 1; }
+.ai-hub-action-card { border: 0; background: transparent; padding: 0; margin: 0 8px 12px; }
+.ai-hub-proposal { border: 1px solid rgba(128,128,160,.22); background: rgba(128,128,160,.035); border-radius: 14px; padding: 18px; }
+.ai-hub-proposal--done { padding: 16px; border: 1px solid rgba(87,153,145,.24); background: linear-gradient(125deg, rgba(66,160,139,.07), rgba(103,116,220,.045)); }
+.ai-hub-proposal-heading { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.ai-hub-proposal--done .ai-hub-proposal-title { margin: 0; line-height: 1.5; font-weight: 550; }
+.ai-hub-result-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 32px; height: 32px; border-radius: 10px; background: rgba(51,151,119,.12); color: #237e60; box-shadow: inset 0 0 0 1px rgba(51,151,119,.12); }
+[data-theme="dark"] .ai-hub-result-icon { color: #8edac0; background: rgba(92,190,156,.12); }
+.ai-hub-proposal--done .ai-hub-proposal-actions { margin: 13px 0 0 43px; gap: 10px; }
+.ai-hub-proposal--done .ai-hub-proposal-description { margin: 8px 0 0 43px; }
+.ai-hub-result-undo { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid rgba(128,128,160,.24); border-radius: 8px; padding: 7px 10px; background: rgba(128,128,160,.065); color: var(--text-color); font: inherit; font-size: 12px; cursor: pointer; }
+.ai-hub-result-undo:hover:not(:disabled) { background: rgba(128,128,160,.14); }
+.ai-hub-result-undo:disabled { opacity: .45; cursor: default; }
+.ai-hub-details-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 7px 8px 7px 13px; font-weight: 450; }
+.ai-hub-details-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.ai-hub-result-undo:focus-visible, .ai-hub-details-toggle:focus-visible { outline: 2px solid #708cff; outline-offset: 3px; }
+.ai-hub-proposal-title { font-size: 14px; font-weight: 500; margin: 0 0 8px; }
+.ai-hub-proposal-description { font-size: 12px; opacity: .65; margin: 0 0 16px; line-height: 1.6; }
+.ai-hub-proposal-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ai-hub-proposal-actions > .ai-tool-action-btn { width: auto; margin: 0; padding: 9px 15px; font-size: 12px; }
+.ai-hub-proposal-details { margin-top: 18px; border-top: 1px solid rgba(128,128,160,.14); padding-top: 16px; }
+.ai-hub-proposal-details .ai-tool-panel { margin: 0; }
+.ai-hub-conversation .ai-hub-suggestions { margin-top: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+    .ai-hub-welcome-copy, .ai-hub-proposal, .ai-hub-proposal-details { animation: hub-arrive 240ms var(--hub-out) both; }
+    .ai-hub-start-prompts button { animation: hub-arrive 240ms var(--hub-out) both; }
+    .ai-hub-start-prompts button:nth-child(2) { animation-delay: 40ms; }
+    .ai-hub-start-prompts button:nth-child(3) { animation-delay: 80ms; }
+    .ai-hub-conversation .tp-composer::before { transition: opacity 240ms ease-out; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ai-hub-welcome-copy, .ai-hub-proposal, .ai-hub-proposal-details, .ai-hub-start-prompts button, .ai-hub-conversation .tp-composer::before { animation: none; transition: none; }
+}
+html.performance-mode .ai-hub-conversation .tp-composer::before { transition: none; }
+.ai-tools-modal--hub .ai-tools-modal-content { overflow: hidden; }
+.ai-hub-start-prompts .tp-pill { font-weight: 450; }
+.ai-hub-proposal-details[hidden] { display: none; }
+
+/* Suggestions belong to the composer, not to scrollable conversation history. */
+.ai-hub-conversation .tp-chat > .ai-hub-suggestions { flex-shrink: 0; padding: 4px 8px 0; margin: 0; }
+.ai-tools-modal--hub.ai-tools-modal--planning.ai-tools-modal--fullpage { max-width: min(1080px, 94vw); }
+.ai-tools-modal--hub .ai-hub-with-collection .tp-layout { flex-direction: row; gap: 16px; }
+.ai-hub-with-collection .tp-chat { flex: 1 1 54%; min-width: 0; }
+.ai-hub-collection-panel { display: flex; flex-direction: column; flex: 1 1 46%; min-height: 0; min-width: 0; overflow: hidden; border-left: 1px solid rgba(128,128,160,.18); padding-left: 16px; }
+.ai-hub-collection-caption { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-color); font-size: 11px; opacity: .65; margin: 6px 0 14px; }
+.ai-hub-collection-caption span { font-size: 10px; }
+.ai-hub-collection-panel .tp-tabs-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; width: auto; border: 0; background: transparent; overflow: hidden; }
+.ai-hub-collection-panel .tp-groups { flex: 1; min-height: 0; overflow-y: auto; }
+.ai-hub-collection-panel .tp-tabs-header, .ai-hub-collection-panel .tp-tabs-footer { flex-shrink: 0; }
+.ai-hub-collection-panel .tp-collection-name { min-width: 0; font-size: 14px; }
+.ai-hub-collection-panel .tp-tabs-footer { flex-wrap: wrap; }
+.ai-hub-collection-panel .tp-group { border-radius: 10px; background: rgba(128,128,160,.045); padding: 10px; }
+.ai-hub-collection-panel .tp-tab { min-width: 0; }
+@keyframes hub-panel-enter { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes hub-tab-enter { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes hub-tab-exit { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(12px); } }
+@media (prefers-reduced-motion: no-preference) {
+    .ai-hub-collection-panel { animation: hub-panel-enter 280ms var(--hub-out) both; }
+    .ai-hub-collection-panel .tp-tab--materializing { animation: hub-tab-enter 280ms var(--hub-out) both; }
+    .ai-hub-collection-panel .tp-tab--vanishing, .ai-hub-collection-panel .tp-tab--removing { animation: hub-tab-exit 220ms ease-out both; }
+    .ai-hub-collection-panel .tp-group--vanishing { animation: hub-tab-exit 220ms ease-out both; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ai-hub-collection-panel, .ai-hub-collection-panel .tp-tab, .ai-hub-collection-panel .tp-group { animation: none; transition: none; }
+}
+html.performance-mode .ai-hub-collection-panel,
+html.performance-mode .ai-hub-collection-panel .tp-tab,
+html.performance-mode .ai-hub-collection-panel .tp-group { animation: none; transition: none; }
+@media (max-width: 520px) {
+    .ai-tools-modal--hub .ai-hub-with-collection .tp-layout { flex-direction: column; }
+    .ai-hub-collection-panel { border-left: 0; border-top: 1px solid rgba(128,128,160,.18); padding: 10px 0 0; }
+}
+
+.ai-chat-avatar { display: inline-flex; flex: 0 0 28px; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 50%; overflow: hidden; user-select: none; }
+.ai-chat-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ai-chat-avatar--assistant { border-radius: 50%; background: rgba(128,128,160,.07); box-shadow: inset 0 0 0 1px rgba(128,128,160,.12); }
+.ai-chat-avatar--assistant img { width: 23px; height: 23px; object-fit: contain; }
+.ai-chat-avatar--user { color: var(--text-color); background: rgba(118,128,191,.2); font-size: 10px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(128,128,160,.16); }
+.ai-hub-conversation .tp-msg { align-items: flex-start; gap: 10px; }
+.ai-hub-conversation .ai-chat-avatar { margin-top: 5px; }
+.ai-hub-conversation .tp-msg--assistant .tp-bubble { max-width: calc(100% - 38px); min-width: 0; }
+.ai-hub-conversation .ai-hub-action-card, .ai-hub-conversation .tp-offer-chips, .ai-hub-conversation .tp-tab-results { margin-left: 38px; }
+
+/* ── Liquid glass ─────────────────────────────────────────────────────────────
+   Same recipe as the tabox.co consent card: translucent blue/violet-tinted base,
+   1px light border, backdrop blur + saturate, inset specular top highlight, soft
+   drop shadow and a sheen across the top. Tokens flip per theme; everything in
+   the hub (card, surfaces, controls) derives from them. No color-mix (Chrome 89). */
+.ai-tools-modal--hub {
+    --glass-tint-a: rgba(37, 99, 235, .16);
+    --glass-tint-b: rgba(255, 255, 255, .78);
+    --glass-tint-c: rgba(124, 58, 237, .14);
+    --glass-border: rgba(255, 255, 255, .7);
+    --glass-border-strong: rgba(255, 255, 255, .95);
+    --glass-hi: rgba(255, 255, 255, .9);
+    --glass-sheen: rgba(255, 255, 255, .55);
+    --glass-surface: rgba(255, 255, 255, .42);
+    --glass-surface-hover: rgba(255, 255, 255, .62);
+    --glass-surface-border: rgba(70, 80, 140, .16);
+    --glass-surface-border-hover: rgba(70, 80, 140, .3);
+    --glass-shadow: 0 18px 50px rgba(30, 40, 90, .22), 0 2px 12px rgba(124, 58, 237, .14);
+}
+[data-theme="dark"] .ai-tools-modal--hub {
+    --glass-tint-a: rgba(37, 99, 235, .3);
+    --glass-tint-b: rgba(20, 24, 44, .84);
+    --glass-tint-c: rgba(124, 58, 237, .26);
+    --glass-border: rgba(255, 255, 255, .18);
+    --glass-border-strong: rgba(255, 255, 255, .32);
+    --glass-hi: rgba(255, 255, 255, .28);
+    --glass-sheen: rgba(255, 255, 255, .14);
+    --glass-surface: rgba(255, 255, 255, .08);
+    --glass-surface-hover: rgba(255, 255, 255, .14);
+    --glass-surface-border: rgba(255, 255, 255, .18);
+    --glass-surface-border-hover: rgba(255, 255, 255, .32);
+    --glass-shadow: 0 18px 50px rgba(0, 0, 0, .45), 0 2px 12px rgba(124, 58, 237, .22);
+}
+
+/* Overlay: frost the app behind the card so the glass has something to refract. */
+.ai-tools-modal-overlay:has(.ai-tools-modal--hub) { -webkit-backdrop-filter: blur(10px) saturate(120%); backdrop-filter: blur(10px) saturate(120%); }
+
+/* The card. */
+.ai-tools-modal--hub .ai-tools-modal-content {
+    border: 1px solid var(--glass-border);
+    background: linear-gradient(115deg, var(--glass-tint-a), var(--glass-tint-b) 50%, var(--glass-tint-c));
+    -webkit-backdrop-filter: blur(18px) saturate(170%);
+    backdrop-filter: blur(18px) saturate(170%);
+    box-shadow: inset 0 1px 0 var(--glass-hi), inset 0 -1px 1px rgba(255,255,255,.06), var(--glass-shadow);
+}
+.ai-tools-modal--hub .ai-tools-modal-content::before {
+    display: block; content: ''; position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
+    padding: 0; -webkit-mask: none; mask: none;
+    background: linear-gradient(to bottom, var(--glass-sheen), rgba(255,255,255,.03) 40%, transparent 60%);
+}
+.ai-tools-modal--hub .ai-tools-modal-content > * { position: relative; z-index: 1; }
+
+/* Glass surfaces: cards, proposals, tool tiles, pickers, groups, user bubbles. */
+.ai-hub-proposal,
+.ai-tools-modal--hub .ai-hero-card, .ai-tools-modal--hub .ai-tool-card,
+.ai-hub-collection-panel .tp-group,
+.ai-hub-conversation .tp-picker,
+.ai-hub-conversation .tp-msg--user .tp-bubble,
+.ai-chat-avatar--assistant, .ai-chat-avatar--user {
+    border: 1px solid var(--glass-surface-border);
+    background: linear-gradient(to bottom, var(--glass-surface-hover), var(--glass-surface) 55%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    backdrop-filter: blur(12px) saturate(160%);
+    box-shadow: inset 0 1px 0 var(--glass-hi), 0 6px 18px rgba(0,0,0,.08);
+}
+.ai-hub-proposal--done { background: linear-gradient(125deg, rgba(66,160,139,.14), var(--glass-surface) 60%); border-color: rgba(87,153,145,.3); }
+.ai-hub-conversation .tp-picker { border-radius: 14px; padding: 10px; }
+.ai-chat-avatar--assistant, .ai-chat-avatar--user { box-shadow: inset 0 1px 0 var(--glass-hi); }
+.ai-tools-modal--hub .ai-hero-card:hover, .ai-tools-modal--hub .ai-tool-card:hover { border-color: var(--glass-surface-border-hover); background: var(--glass-surface-hover); box-shadow: inset 0 1px 0 var(--glass-hi), 0 6px 18px rgba(0,0,0,.08); }
+/* Featured rows: same glass surface + hover, tinted a slightly-dark orange
+ * (burnt amber) so the two headline actions read apart from the grey rows. */
+.ai-tools-modal--hub .ai-hero-card {
+    border-color: rgba(186,104,30,.34);
+    background: linear-gradient(to bottom, rgba(186,104,30,.18), rgba(186,104,30,.08) 55%);
+}
+.ai-tools-modal--hub .ai-hero-card:hover {
+    border-color: rgba(186,104,30,.52);
+    background: linear-gradient(to bottom, rgba(186,104,30,.26), rgba(186,104,30,.13) 55%);
+}
+.ai-hub-collection-panel { border-left-color: var(--glass-surface-border); }
+.ai-hub-proposal-details { border-top-color: var(--glass-surface-border); }
+
+/* Glass controls: pills, chips, toolbar, undo, cancel, more, new chat. */
+.ai-hub-conversation .tp-pill,
+.ai-hub-scope-chip,
+.ai-hub-result-undo,
+.ai-tools-modal--hub .ai-tool-action-btn--cancel,
+.ai-hub-more,
+.ai-hub-conversation .tp-new-plan-btn,
+.ai-hub-conversation .tp-pills-refresh {
+    border: 1px solid var(--glass-surface-border);
+    border-radius: 999px;
+    color: var(--text-color);
+    opacity: 1;
+    background: var(--glass-surface);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    backdrop-filter: blur(12px) saturate(160%);
+    box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.ai-hub-conversation .tp-pill:hover:not(:disabled),
+.ai-hub-result-undo:hover:not(:disabled),
+.ai-tools-modal--hub .ai-tool-action-btn--cancel:hover:not(:disabled),
+.ai-hub-more:hover:not(:disabled),
+.ai-hub-conversation .tp-new-plan-btn:hover:not(:disabled),
+.ai-hub-conversation .tp-pills-refresh:hover:not(:disabled) {
+    border-color: var(--glass-surface-border-hover);
+    background: var(--glass-surface-hover);
+    filter: brightness(1.08) saturate(1.1);
+    box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+.ai-hub-conversation .tp-pill--skeleton { border-color: transparent; }
+/* New-chat pencil floats over the first message; keep it a quiet icon, not a glass disc. */
+/* "New Chat" sits in the modal header beside the title: a clear pill button. */
+.ai-hub-header-slot { display: inline-flex; align-items: center; margin-left: 8px; }
+.ai-hub-new-chat { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px 4px 8px; font-size: 11px; font-weight: 500; opacity: 1; color: var(--text-color); border-radius: 999px; border: 1px solid var(--glass-surface-border); background: transparent; box-shadow: none; cursor: pointer; }
+.ai-hub-new-chat:hover:not(:disabled) { border-color: var(--glass-surface-border-hover); background: var(--glass-surface); }
+.ai-hub-new-chat:disabled { opacity: .45; cursor: default; }
+.ai-hub-start-prompts .tp-pill { border-radius: 999px; }
+
+/* Primary CTA: tinted glass over the brand gradient so it stays the loudest control. */
+.ai-tools-modal--hub .ai-tool-action-btn:not(.ai-tool-action-btn--cancel) {
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.35);
+    background: linear-gradient(to bottom, rgba(255,255,255,.22), rgba(255,255,255,0) 55%), linear-gradient(135deg, #4361ee 0%, #2563eb 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 6px 16px rgba(37,99,235,.35);
+}
+.ai-hub-conversation .tp-send-btn {
+    border: 1px solid rgba(255,255,255,.35);
+    background: linear-gradient(to bottom, rgba(255,255,255,.22), rgba(255,255,255,0) 55%), linear-gradient(135deg, #4361ee 0%, #2563eb 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 6px 16px rgba(37,99,235,.35);
+}
+
+/* Composer: one solid pill (Gemini-style), not glass. The textarea, "+" and
+   send button sit inside it with no frames of their own. */
+.ai-tools-modal--hub { --composer-bg: #ffffff; --composer-border: rgba(70, 80, 140, .14); --composer-shadow: 0 10px 30px rgba(30, 40, 90, .14); }
+[data-theme="dark"] .ai-tools-modal--hub { --composer-bg: #1c1d22; --composer-border: rgba(255, 255, 255, .06); --composer-shadow: 0 10px 30px rgba(0, 0, 0, .35); }
+.ai-hub-conversation .tp-composer {
+    min-height: 56px; padding: 6px 6px 6px 10px; border-radius: 999px;
+    border: 0; background: transparent; box-shadow: none;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+/* The glow (::before, z -2) is a child, so it paints above the composer's own
+   background; the solid pill is a second layer (::after, z -1) on top of it. */
+.ai-hub-conversation .tp-composer::before { z-index: -2; }
+.ai-hub-conversation .tp-composer::after {
+    content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit;
+    border: 1px solid var(--composer-border); background: var(--composer-bg); box-shadow: var(--composer-shadow);
+}
+.ai-hub-conversation .tp-composer:focus-within::after { border-color: rgba(67, 97, 238, .35); }
+.ai-hub-conversation .tp-input, .ai-hub-conversation .tp-input:focus {
+    border: 0; border-radius: 0; padding: 8px 6px;
+    background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none;
+}
+.ai-hub-conversation .ai-hub-more, .ai-hub-conversation .ai-hub-more:hover:not(:disabled) {
+    flex-basis: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent;
+    -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; filter: none; opacity: .85;
+}
+.ai-hub-conversation .ai-hub-more:hover:not(:disabled) { opacity: 1; background: var(--glass-surface); }
+.ai-hub-conversation .tp-send-btn {
+    width: 40px; height: 40px; border: 0;
+    background: linear-gradient(135deg, #4361ee 0%, #2563eb 100%);
+    box-shadow: none;
+}
+
+/* Blur is the expensive part; drop it (keep the tint) for performance mode. */
+html.performance-mode .ai-tools-modal--hub .ai-tools-modal-content,
+html.performance-mode .ai-tools-modal--hub *,
+html.performance-mode .ai-tools-modal-overlay:has(.ai-tools-modal--hub) { -webkit-backdrop-filter: none; backdrop-filter: none; }

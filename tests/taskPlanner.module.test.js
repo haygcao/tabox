@@ -62,6 +62,96 @@ beforeEach(async () => {
     mockAI(async () => turnJSON());
 });
 
+describe('AI Hub conversation', () => {
+    test('records completion once and consumes applied split actions so reopening never repeats them', async () => {
+        await seedSession({ hubAction: { id: 'a', tool: 'split-collection', uids: ['c1'] } });
+        await planner.recordHubResult({ id: 'operation-1', tool: 'split-collection', text: 'Split into 2 collections.', clearAction: true });
+        await planner.recordHubResult({ id: 'operation-1', tool: 'split-collection', text: 'Split into 2 collections.', clearAction: true });
+        const state = await readStored();
+        expect(state.messages.filter(m => m.content === 'Split into 2 collections.')).toHaveLength(1);
+        expect(state.hubAction.tool).toBe('clarify');
+    });
+    test('refreshes suggestions after a conversation starts using its current context', async () => {
+        await seedSession({ messages: [{ id: 'm', role: 'user', content: 'Split Research' }], hubAction: { tool: 'split-collection' } });
+        const ai = mockAI(async () => JSON.stringify({ pills: ['Review the topics', 'Find duplicate tabs', 'Plan a research project'] }));
+        const res = await planner.taskPlannerRefreshPills({ hub: true });
+        expect(res.ignored).not.toBe(true);
+        expect(res.state.followUps).toContain('Review the topics');
+        expect(ai.mock.calls[0][0][0].content).toContain('Split Research');
+        expect(ai.mock.calls[0][0][0].content).toContain('Never suggest planning a trip');
+    });
+    test('opens a tool review in the same persisted transcript without mutating planner tabs', async () => {
+        const groups = [{ uid: 'g', title: 'Reading', color: 'blue', tabs: [] }];
+        await seedSession({ groups });
+        const ai = mockAI(async () => JSON.stringify({ tool: 'split-collection', uids: ['c1'], reply: 'Choose the topics in the review.' }));
+        const res = await planner.taskPlannerSend({ text: 'Split Research', hub: true, loadCollections: async () => [{ uid: 'c1', name: 'Research', tabs: [] }] });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups).toEqual(groups);
+        expect(res.state.hubAction).toMatchObject({ tool: 'split-collection', uids: ['c1'] });
+        expect(res.state.messages.map(m => m.role)).toEqual(['user', 'assistant']);
+        expect((await readStored()).hubAction).toEqual(res.state.hubAction);
+        expect(ai).toHaveBeenCalledTimes(1);
+    });
+
+    test('direct suggestion clicks validate against current storage without an AI routing call', async () => {
+        await seedSession();
+        const ai = mockAI(async () => turnJSON());
+        const res = await planner.taskPlannerSend({ text: 'Split removed collection', hub: true, action: { tool: 'split-collection', uids: ['removed'] }, loadCollections: async () => [] });
+        expect(res.ok).toBe(false);
+        expect(ai).not.toHaveBeenCalled();
+        expect((await readStored()).hubAction).toBeUndefined();
+    });
+
+    test('find-tab routes search saved tabs locally and land the matches on the assistant message', async () => {
+        await seedSession();
+        const ai = mockAI(async () => JSON.stringify({ tool: 'find-tab', uids: [], reply: 'I searched your collections.', query: 'dima aluf' }));
+        const collections = [{ uid: 'c1', name: 'Work', tabs: [
+            { url: 'https://docs.google.com/d/1', title: 'Interview notes - Dima Aluf', favIconUrl: 'https://docs.google.com/favicon.ico' },
+            { url: 'https://example.com', title: 'Unrelated' },
+        ] }];
+        const res = await planner.taskPlannerSend({ text: 'find my interview notes for Dima Aluf', hub: true, loadCollections: async () => collections });
+        expect(res.ok).toBe(true);
+        expect(ai).toHaveBeenCalledTimes(1);
+        expect(res.state.hubAction).toMatchObject({ tool: 'find-tab', query: 'dima aluf' });
+        const reply = res.state.messages.at(-1);
+        expect(reply.role).toBe('assistant');
+        expect(reply.content).toBe('I searched your collections.');
+        expect(reply.tabResults).toEqual([{ collectionUid: 'c1', collectionName: 'Work', title: 'Interview notes - Dima Aluf', url: 'https://docs.google.com/d/1', favIconUrl: 'https://docs.google.com/favicon.ico' }]);
+        expect((await readStored()).messages.at(-1).tabResults).toHaveLength(1);
+    });
+
+    test('a clarify reply keeps the router follow-ups so the suggestion chips stay on topic', async () => {
+        await seedSession();
+        mockAI(async () => JSON.stringify({ tool: 'clarify', uids: [], reply: 'Build on your Austria Winter Travel collection or plan a new trip?', query: '', followUps: ['Build on Austria Winter Travel', 'Plan a brand new trip'] }));
+        const res = await planner.taskPlannerSend({ text: 'Lets plan a trip to Austria', hub: true, loadCollections: async () => [{ uid: 'c1', name: 'Austria Winter Travel', tabs: [] }] });
+        expect(res.ok).toBe(true);
+        expect(res.state.followUps).toEqual(['Build on Austria Winter Travel', 'Plan a brand new trip']);
+        expect((await readStored()).followUps).toEqual(['Build on Austria Winter Travel', 'Plan a brand new trip']);
+    });
+
+    test('find-tab with no matches says so and attaches no results', async () => {
+        await seedSession();
+        mockAI(async () => JSON.stringify({ tool: 'find-tab', uids: [], reply: 'Searching…', query: 'zzz' }));
+        const res = await planner.taskPlannerSend({ text: 'find zzz', hub: true, loadCollections: async () => [{ uid: 'c1', name: 'Work', tabs: [{ url: 'https://a.com', title: 'A' }] }] });
+        const reply = res.state.messages.at(-1);
+        expect(reply.content).toMatch(/couldn.t find/i);
+        expect(reply.content).toContain('zzz');
+        expect(reply.tabResults).toBeUndefined();
+    });
+
+    test('hub planner requests still gather websites and retain the one conversation', async () => {
+        await seedSession();
+        mockAI(async (_messages, options) => options.responseConstraint.properties.tool
+            ? JSON.stringify({ tool: 'task-planner', uids: [], reply: '' })
+            : turnJSON());
+        const res = await planner.taskPlannerSend({ text: 'Plan a Japan trip', hub: true, loadCollections: async () => [] });
+        expect(res.ok).toBe(true);
+        expect(res.state.groups).toHaveLength(1);
+        expect(res.state.hubAction.tool).toBe('task-planner');
+        expect(res.state.messages.map(m => m.role)).toEqual(['user', 'assistant']);
+    });
+});
+
 describe('taskPlannerStart', () => {
     test('mints a session with the contract shape and AI-generated pills', async () => {
         const ai = mockAI(async () => '{"pills":["Plan a trip","Research desks","Learn Spanish"]}');
@@ -87,6 +177,31 @@ describe('taskPlannerStart', () => {
         expect(messages).toHaveLength(1);
         expect(messages[0].content).toContain('Japan 2026');
         expect(opts.responseConstraint).toBe(core.PILLS_SCHEMA);
+    });
+
+    test('deferPills replies with the skeleton session before the pills AI call resolves', async () => {
+        let resolvePills;
+        mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        const res = await planner.taskPlannerStart({ deferPills: true, loadSummaries: async () => [] });
+        expect(res.ok).toBe(true);
+        expect(res.state.status).toBe('ready');
+        expect(res.state.pills).toBeNull(); // skeleton — the panel paints now
+        resolvePills('{"pills":["A pill","B pill","C pill"]}');
+        await planner.taskPlannerPillsSettled();
+        expect((await readStored()).pills).toEqual(['A pill', 'B pill', 'C pill']);
+    });
+
+    test('deferPills on an unused existing session also replies immediately', async () => {
+        let resolvePills;
+        mockAI(() => new Promise((resolve) => { resolvePills = resolve; }));
+        await seedSession({ pills: ['Old pill A', 'Old pill B', 'Old pill C'] });
+        const res = await planner.taskPlannerStart({ deferPills: true, loadSummaries: async () => [] });
+        expect(res.ok).toBe(true);
+        expect(res.state.sessionId).toBe('session-1');
+        expect(res.state.pills).toBeNull();
+        resolvePills('{"pills":["New A","New B","New C"]}');
+        await planner.taskPlannerPillsSettled();
+        expect((await readStored()).pills).toEqual(['New A', 'New B', 'New C']);
     });
 
     test('falls back to FALLBACK_PILLS when the AI call fails — never an error state', async () => {

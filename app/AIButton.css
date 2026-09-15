@@ -5,39 +5,84 @@
 }
 
 .ai-button {
+    /* ── Liquid glass ─────────────────────────────────────────────────────
+       Same recipe as the AI Hub card (app/ai/AIHub.css): translucent
+       blue/violet-tinted base, 1px light border, backdrop blur + saturate,
+       inset specular top highlight, soft drop shadow and a top sheen.
+       Tokens flip per theme. No color-mix (Chrome 89 / Firefox parity).
+       ────────────────────────────────────────────────────────────────────── */
+    --ai-glass-tint-a: rgba(37, 99, 235, 0.22);
+    --ai-glass-tint-b: rgba(255, 255, 255, 0.6);
+    --ai-glass-tint-c: rgba(124, 58, 237, 0.2);
+    --ai-glass-border: rgba(255, 255, 255, 0.72);
+    --ai-glass-border-hover: rgba(255, 255, 255, 0.95);
+    --ai-glass-hi: rgba(255, 255, 255, 0.9);
+    --ai-glass-sheen: rgba(255, 255, 255, 0.55);
+    --ai-glass-shadow: 0 6px 18px rgba(30, 40, 90, 0.2), 0 1px 8px rgba(124, 58, 237, 0.16);
+    --ai-glass-shadow-hover: 0 8px 24px rgba(30, 40, 90, 0.26), 0 2px 12px rgba(124, 58, 237, 0.24);
+    /* Label + sparkle ink; the glass is translucent so white would smear. */
+    --ai-glass-ink: #3f3ac0;
+    --ai-glass-ink-shadow: rgba(255, 255, 255, 0.7);
+
     position: relative;
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    border: none;
     /* Fully rounded left and right edges (capsule). */
+    border: 1px solid var(--ai-glass-border);
     border-radius: 999px;
-    padding: 1px 11px;
+    /* 0 vertical padding: the 1px border restores the pre-glass 28px height. */
+    padding: 0 10px;
     cursor: pointer;
-    color: #fff;
-    /* Deep blue → blue-purple gradient fill. */
-    background: linear-gradient(135deg, #3a63db 0%, #5b4fd6 100%);
+    color: var(--ai-glass-ink);
+    background: linear-gradient(115deg, var(--ai-glass-tint-a), var(--ai-glass-tint-b) 50%, var(--ai-glass-tint-c));
+    -webkit-backdrop-filter: blur(14px) saturate(170%);
+    backdrop-filter: blur(14px) saturate(170%);
     font-size: 12px;
     font-weight: 700;
     line-height: 1;
-    /* Subtle always-on gradient glow: purple bleeding left, blue right. */
     box-shadow:
-        0 1px 6px rgba(67, 97, 238, 0.28),
-        -5px 1px 16px rgba(124, 58, 237, 0.2),
-        5px 1px 16px rgba(59, 130, 246, 0.2);
-    transition: box-shadow 0.2s ease, filter 0.2s ease;
+        inset 0 1px 0 var(--ai-glass-hi),
+        inset 0 -1px 1px rgba(255, 255, 255, 0.06),
+        var(--ai-glass-shadow);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
     isolation: isolate;
 }
 
-.ai-button:hover {
-    filter: brightness(1.08);
-    box-shadow:
-        0 2px 10px rgba(67, 97, 238, 0.38),
-        -6px 2px 20px rgba(124, 58, 237, 0.3),
-        6px 2px 20px rgba(59, 130, 246, 0.3);
+[data-theme="dark"] .ai-button {
+    --ai-glass-tint-a: rgba(37, 99, 235, 0.34);
+    --ai-glass-tint-b: rgba(20, 24, 44, 0.7);
+    --ai-glass-tint-c: rgba(124, 58, 237, 0.3);
+    --ai-glass-border: rgba(255, 255, 255, 0.2);
+    --ai-glass-border-hover: rgba(255, 255, 255, 0.34);
+    --ai-glass-hi: rgba(255, 255, 255, 0.28);
+    --ai-glass-sheen: rgba(255, 255, 255, 0.14);
+    --ai-glass-shadow: 0 6px 18px rgba(0, 0, 0, 0.42), 0 1px 8px rgba(124, 58, 237, 0.22);
+    --ai-glass-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 12px rgba(124, 58, 237, 0.3);
+    --ai-glass-ink: #e4e7ff;
+    --ai-glass-ink-shadow: rgba(10, 12, 28, 0.55);
 }
 
-/* Gradient mist + inner shadow that fades in on hover. */
+.ai-button:hover {
+    border-color: var(--ai-glass-border-hover);
+    box-shadow:
+        inset 0 1px 0 var(--ai-glass-hi),
+        inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+        var(--ai-glass-shadow-hover);
+}
+
+/* Specular sheen across the top third of the capsule. */
+.ai-button::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(to bottom, var(--ai-glass-sheen), rgba(255, 255, 255, 0.03) 42%, transparent 62%);
+}
+
+/* Gradient mist that fades in on hover. */
 .ai-button::after {
     content: "";
     position: absolute;
@@ -50,16 +95,17 @@
     /* Irregular purple/blue fog puffs separated by clear gaps. Rotating this
        conic gradient (via --ai-fog-angle) drifts the puffs around the rim;
        the blur turns the hard wedges into soft wisps; the radial mask keeps
-       the fog hugging the edges and clears the centre. */
+       the fog hugging the edges and clears the centre. Kept lighter than the
+       opaque-fill version so the glass underneath stays readable. */
     background: conic-gradient(
         from var(--ai-fog-angle),
-        rgba(124, 58, 237, 0.95) 0deg,
+        rgba(124, 58, 237, 0.6) 0deg,
         rgba(124, 58, 237, 0) 70deg,
-        rgba(59, 130, 246, 0.95) 150deg,
+        rgba(59, 130, 246, 0.6) 150deg,
         rgba(59, 130, 246, 0) 210deg,
-        rgba(139, 92, 246, 0.9) 290deg,
+        rgba(139, 92, 246, 0.55) 290deg,
         rgba(139, 92, 246, 0) 340deg,
-        rgba(124, 58, 237, 0.95) 360deg
+        rgba(124, 58, 237, 0.6) 360deg
     );
     filter: blur(5px);
     -webkit-mask: radial-gradient(closest-side, transparent 38%, #000 82%);
@@ -84,7 +130,7 @@
 }
 
 .ai-button:focus-visible {
-    outline: 2px solid rgba(67, 97, 238, 0.6);
+    outline: 2px solid rgba(99, 102, 241, 0.7);
     outline-offset: 2px;
 }
 
@@ -94,10 +140,10 @@
 
 /* On hover the three sparkles blink once, one at a time (a left-to-right
    twinkle wave). Each star scales/fades around its own centre via fill-box. */
-/* Drop-shadow gives the white sparkles crisp edges against the
-   blue/purple gradient so their points stay legible. */
+/* A light drop-shadow lifts the sparkles off the translucent glass so their
+   points stay legible over whatever sits behind the button. */
 .ai-button-stars {
-    filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.35));
+    filter: drop-shadow(0 1px 1.5px var(--ai-glass-ink-shadow));
 }
 
 .ai-star {

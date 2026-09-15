@@ -27,14 +27,16 @@ export async function getAIAvailability() {
 // Sessions are stateless request builders: each prompt sends only the system
 // prompt + that prompt (no accumulated context), so repeated prompts on one
 // session don't get slower or costlier over a long run.
-export async function createAISession({ systemPrompt, temperature, topK, signal } = {}) {
+// `action` names the calling feature for the Worker's usage analytics
+// (relayed through the SW's aiComplete handler); it never affects the prompt.
+export async function createAISession({ systemPrompt, temperature, topK, signal, action } = {}) {
     return {
         prompt: (text, options = {}) => requestCompletion(
-            { systemPrompt, temperature, topK },
+            { systemPrompt, temperature, topK, action },
             text,
             { ...options, signal: options.signal || signal },
         ),
-        clone: () => createAISession({ systemPrompt, temperature, topK, signal }),
+        clone: () => createAISession({ systemPrompt, temperature, topK, signal, action }),
         destroy: () => {},
     };
 }
@@ -58,6 +60,7 @@ async function requestCompletion(config, text, { responseConstraint, signal } = 
             topK: config.topK,
             prompt: text,
             responseConstraint,
+            action: config.action,
         },
     });
     // The SW request can't be cancelled through sendMessage — for these small

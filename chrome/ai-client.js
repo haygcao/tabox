@@ -32,16 +32,19 @@ async function aiAvailability() {
 // Sessions are stateless request builders: each prompt sends only the system
 // prompt + that prompt (no accumulated context), so repeated prompts on one
 // session don't get slower or costlier over a long run.
-async function createAISession({ systemPrompt, temperature, topK, signal } = {}) {
+// `action` is a short slug naming the feature making the call (e.g.
+// 'auto-rename'); the Worker records it for usage analytics only — it never
+// changes the model or the prompt. Omit it and the Worker logs 'unknown'.
+async function createAISession({ systemPrompt, temperature, topK, signal, action } = {}) {
     // Prefetch/refresh the auth token so the first prompt doesn't pay for it.
     aiClientBgUtils.getAuthTokenForAI().catch(() => {});
     return {
         prompt: (text, options = {}) => requestCompletion(
-            { systemPrompt, temperature, topK },
+            { systemPrompt, temperature, topK, action },
             text,
             { ...options, signal: options.signal || signal },
         ),
-        clone: () => createAISession({ systemPrompt, temperature, topK, signal }),
+        clone: () => createAISession({ systemPrompt, temperature, topK, signal, action }),
         destroy: () => {},
     };
 }
@@ -72,6 +75,7 @@ async function requestCompletion(config, text, { responseConstraint, signal } = 
         topK: config.topK,
         responseConstraint,
         signal,
+        action: config.action,
     });
 }
 
@@ -83,16 +87,16 @@ const MAX_CHAT_MESSAGES = 32;
 // Multi-turn chat completion: accepts a FULL messages array (system/user/
 // assistant roles — the Worker accepts assistant since the Task Planner
 // change). One-shot prompts should keep using sessions/requestCompletion.
-async function requestChatCompletion(messages, { temperature, topK, responseConstraint, signal, modelTier } = {}) {
+async function requestChatCompletion(messages, { temperature, topK, responseConstraint, signal, modelTier, action } = {}) {
     if (!Array.isArray(messages) || messages.length === 0) throw new Error('Tabox AI: no messages to send');
     if (messages.length > MAX_CHAT_MESSAGES) throw new Error(`Tabox AI: too many messages (max ${MAX_CHAT_MESSAGES})`);
     // Project to the exact wire shape so stray fields (ids, timestamps) from
     // stored transcripts never reach the Worker's strict validator.
     const wireMessages = messages.map((m) => ({ role: m.role, content: m.content }));
-    return performCompletionRequest(wireMessages, { temperature, topK, responseConstraint, signal, modelTier });
+    return performCompletionRequest(wireMessages, { temperature, topK, responseConstraint, signal, modelTier, action });
 }
 
-async function performCompletionRequest(messages, { temperature, topK, responseConstraint, signal, modelTier } = {}) {
+async function performCompletionRequest(messages, { temperature, topK, responseConstraint, signal, modelTier, action } = {}) {
     const token = await aiClientBgUtils.getAuthTokenForAI();
     if (!token) throw new Error('Tabox AI: sign in to Tabox to use AI features');
     // One internal controller drives the fetch; the caller's signal and the
@@ -112,6 +116,8 @@ async function performCompletionRequest(messages, { temperature, topK, responseC
     // Tier NAME only — the Worker maps it to a pinned model ('thinking' runs a
     // reasoning pass; used by Task Planner chat turns).
     if (modelTier !== undefined) body.model_tier = modelTier;
+    // Usage-analytics label only (see createAISession).
+    if (typeof action === 'string' && action) body.action = action;
     if (temperature !== undefined) body.temperature = temperature;
     if (topK !== undefined) body.top_k = topK;
     if (responseConstraint) {

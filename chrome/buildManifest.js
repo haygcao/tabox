@@ -30,6 +30,7 @@ const BACKGROUND_SCRIPTS = [
     'split-collection.js',
     'ai-task-split-collection.js',
     'task-planner-core.js',
+    'ai-hub-core.js',
     'task-planner.js',
 ];
 

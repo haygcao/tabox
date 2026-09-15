@@ -591,12 +591,12 @@
 		inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
-/* Prominent Open Button */
+/* Open Button - flat, simple */
 .open-tabs-icon {
 	display: flex !important;
 	align-items: center;
 	justify-content: center;
-	background: linear-gradient(135deg, var(--primary-color) 0%, var(--gradient-purple) 100%);
+	background: var(--primary-color);
 	border: none;
 	border-radius: 6px;
 	cursor: pointer;
@@ -607,8 +607,8 @@
 	gap: 5px;
 	position: relative;
 	z-index: 200;
-	box-shadow: 0 2px 6px rgba(var(--primary-color-rgb, 52, 152, 219), 0.3);
-	transition: all 0.2s ease;
+	box-shadow: none;
+	transition: filter 0.2s ease;
 	min-width: 50px;
 	height: 24px;
 	text-transform: uppercase;
@@ -616,28 +616,16 @@
 }
 
 .open-tabs-icon:hover {
-	background: linear-gradient(135deg, var(--gradient-purple) 0%, var(--primary-color) 100%);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(var(--primary-color-rgb, 52, 152, 219), 0.4);
+	filter: brightness(1.12);
 }
 
 .open-tabs-icon:active {
-	transform: translateY(0);
-	box-shadow: 0 1px 3px rgba(var(--primary-color-rgb, 52, 152, 219), 0.3);
-}
-
-/* Dark mode adjustments for open button */
-[data-theme="dark"] .open-tabs-icon {
-	box-shadow: 0 2px 8px rgba(var(--primary-color-rgb, 52, 152, 219), 0.25);
-}
-
-[data-theme="dark"] .open-tabs-icon:hover {
-	box-shadow: 0 4px 16px rgba(var(--primary-color-rgb, 52, 152, 219), 0.35);
+	filter: brightness(0.92);
 }
 
 /* Focus window variant (for auto-tracked collections) */
 .open-tabs-icon.focus-mode {
-	background: linear-gradient(135deg, var(--gradient-orange) 0%, var(--gradient-purple) 100%);
+	background: var(--gradient-orange);
 }
 
 /* Folder open button - same size as collection open button */
@@ -646,10 +634,11 @@
 }
 
 .open-tabs-icon.folder-open-btn:disabled {
-	background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+	background: #6b7280;
 	box-shadow: none;
 	cursor: not-allowed;
 	opacity: 0.5;
+	filter: none;
 }
 .menu-icon {
 	display: flex !important;

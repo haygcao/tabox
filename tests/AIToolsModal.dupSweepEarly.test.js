@@ -96,6 +96,7 @@ describe('AIToolsModal duplicate sweep early panel', () => {
         await fireStorageChange({ duplicateSweep: { newValue: sweepState(Date.now() + 60000) } });
         expect(screen.queryByText(/Scanning for duplicates/i)).not.toBeInTheDocument();
         expect(screen.getByText(/1 of 1 duplicate groups/i)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         expect(screen.getByRole('button', { name: /End sweep/i })).toBeInTheDocument();
     });
 
@@ -121,6 +122,7 @@ describe('AIToolsModal duplicate sweep early panel', () => {
         await fireStorageChange({ aiTaskState: { newValue: { id: 't1', type: 'duplicate-sweep', status: 'running' } } });
         await fireStorageChange({ duplicateSweep: { newValue: sweepState(Date.now() + 60000) } });
 
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         loadAllCollections.mockClear();
         await act(async () => {
             fireEvent.click(screen.getByRole('button', { name: /Apply choice/i }));
