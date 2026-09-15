@@ -1,13 +1,28 @@
 // AI proxy: the extension never ships or sees the OpenRouter API key — it
 // lives only in the OPENROUTER_API_KEY Worker secret. The model and output
-// budget are pinned server-side so a signed-in caller can't turn this into a
-// general-purpose LLM proxy; the request surface is limited to exactly what
-// the Tabox AI clients send (messages + sampling params + a JSON schema).
+// budget are pinned server-side, and abuse is bounded by the caller-side
+// checks in the route handler plus the limits here: signed-in Pro users only,
+// rate limits (20/min, 500/day), a 300k-char total prompt budget, and at most
+// 32 system/user/assistant messages (multi-turn support added for the Task
+// Planner chat). The request surface is rebuilt from an allowlist of fields —
+// nothing from the client body is forwarded as-is.
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'google/gemini-3.5-flash-lite';
-const MAX_OUTPUT_TOKENS = 8192;
+// Model TIERS are pinned server-side; the client can only pick a tier name
+// (model_tier), never a model string. 'thinking' runs a reasoning pass before
+// answering — used by the Task Planner chat to decompose a request into its
+// facets (hotels, tickets, flights, …) — and gets a larger output budget
+// because reasoning tokens count against max_tokens.
+const MODEL_TIERS = {
+  default: { model: 'google/gemini-3.5-flash-lite', maxTokens: 8192 },
+  thinking: {
+    model: 'google/gemini-3.8-flash',
+    maxTokens: 16384,
+    reasoning: { effort: 'medium' },
+  },
+};
 const PROVIDER_PREFERENCES = { sort: 'throughput', require_parameters: true };
-const MAX_MESSAGES = 8;
+// Mirrored client-side as MAX_CHAT_MESSAGES in chrome/ai-client.js — keep in sync.
+const MAX_MESSAGES = 32;
 // Total prompt budget per request. Generous for the biggest legit prompt
 // (auto-arrange over a large library) while still bounding per-call spend.
 const MAX_CONTENT_CHARS = 300_000;
@@ -16,13 +31,16 @@ const MAX_CONTENT_CHARS = 300_000;
 // nothing from the client body is forwarded as-is.
 export function validateAIRequest(body) {
   if (!body || typeof body !== 'object') return { ok: false, error: 'invalid_body' };
-  const { messages, temperature, top_k: topK, response_format: responseFormat } = body;
+  const { messages, temperature, top_k: topK, response_format: responseFormat, model_tier: modelTier } = body;
+  if (modelTier !== undefined && !Object.prototype.hasOwnProperty.call(MODEL_TIERS, modelTier)) {
+    return { ok: false, error: 'invalid_model_tier' };
+  }
   if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) {
     return { ok: false, error: 'invalid_messages' };
   }
   let totalChars = 0;
   for (const message of messages) {
-    if (!message || (message.role !== 'system' && message.role !== 'user') || typeof message.content !== 'string') {
+    if (!message || (message.role !== 'system' && message.role !== 'user' && message.role !== 'assistant') || typeof message.content !== 'string') {
       return { ok: false, error: 'invalid_messages' };
     }
     totalChars += message.content.length;
@@ -47,7 +65,9 @@ export function validateAIRequest(body) {
   if (temperature !== undefined) request.temperature = temperature;
   if (topK !== undefined) request.top_k = topK;
   if (schema) request.response_format = { type: 'json_schema', json_schema: { name: 'response', strict: true, schema } };
-  return { ok: true, request };
+  // The tier rides OUTSIDE request: completeAI resolves it to pinned
+  // model/max_tokens/reasoning; the raw field is never forwarded upstream.
+  return { ok: true, request, tier: modelTier || 'default' };
 }
 
 // OpenRouter fans the pinned model out across several providers, and a
@@ -62,6 +82,7 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function completeAI(env, validated, fetchImpl = fetch, sleepImpl = defaultSleep) {
   if (!env.OPENROUTER_API_KEY) return { ok: false, status: 500, error: 'not_configured' };
+  const tier = MODEL_TIERS[validated.tier] || MODEL_TIERS.default;
   for (let attempt = 0; ; attempt++) {
     let res;
     try {
@@ -74,9 +95,12 @@ export async function completeAI(env, validated, fetchImpl = fetch, sleepImpl = 
           'X-Title': 'Tabox',
         },
         body: JSON.stringify({
-          model: MODEL,
-          max_tokens: MAX_OUTPUT_TOKENS,
+          model: tier.model,
+          max_tokens: tier.maxTokens,
           provider: PROVIDER_PREFERENCES,
+          // Reasoning happens server-side of the content: the JSON answer stays
+          // in message.content, so response handling is tier-agnostic.
+          ...(tier.reasoning ? { reasoning: tier.reasoning } : {}),
           ...validated.request,
         }),
       });

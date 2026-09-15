@@ -39,11 +39,11 @@ const C_EMPTY = { uid: 'c3', name: 'Empty', tabs: [] };
 
 // Capture the registered storage.onChanged listener so tests can simulate
 // the service worker writing aiTaskState progress.
-let storageListener;
+let storageListeners;
 
 const fireStorageChange = async (newValue) => {
     await act(async () => {
-        storageListener({ aiTaskState: { newValue } }, 'local');
+        storageListeners.forEach(fn => fn({ aiTaskState: { newValue } }, 'local'));
     });
 };
 
@@ -73,14 +73,16 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
             if (msg.type === 'aiGetState') return Promise.resolve(null);
             return Promise.resolve({});
         });
-        storageListener = undefined;
-        browser.storage.onChanged.addListener = jest.fn((fn) => { storageListener = fn; });
+        storageListeners = [];
+        browser.storage.onChanged.addListener = jest.fn((fn) => { storageListeners.push(fn); });
         browser.storage.onChanged.removeListener = jest.fn();
     });
 
     test('clicking Run dispatches aiRun(auto-rename) with target uids', async () => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
@@ -97,7 +99,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     test('selected scope limits the dispatched uids', async () => {
         await renderOpenModal({ scope: { type: 'selected', uids: ['c2'] } });
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename 1/i }));
 
         await act(async () => {
@@ -112,7 +116,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     test('running aiTaskState change sets processing uids and renders results live', async () => {
         const store = await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
@@ -135,7 +141,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     test('done aiTaskState change renders summary/results, clears atoms, fires toast once', async () => {
         const store = await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
@@ -174,7 +182,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     test('cancel button sends aiCancel', async () => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
@@ -196,7 +206,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     test('cancelled status shows the cancel note', async () => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
@@ -214,7 +226,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     test('error status shows the error and no toast', async () => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
@@ -226,21 +240,23 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
             filed: 0, total: 2, results: [], skipped: [],
         });
 
-        expect(screen.getByText(/unexpected error/i)).toBeInTheDocument();
+        expect(screen.getAllByText(/unexpected error/i)[0]).toBeInTheDocument();
         expect(showUndoToast).not.toHaveBeenCalled();
     });
 
     test('pre-flight failure shows error and does not dispatch aiRun', async () => {
         getAIAvailability.mockResolvedValue('unavailable');
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
 
         await act(async () => {
             fireEvent.click(screen.getByRole('button', { name: /auto-rename/i }));
         });
 
-        await waitFor(() => expect(screen.getByText(/tabox ai is not available/i)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getAllByText(/tabox ai is not available/i)[0]).toBeInTheDocument());
         expect(browser.runtime.sendMessage.mock.calls.find((c) => c[0].type === 'aiRun')).toBeUndefined();
     });
 
@@ -282,7 +298,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
         });
 
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 
         // The idle run button is shown — not the done summary — and no toast fires.
         await waitFor(() => expect(screen.getByRole('button', { name: /auto-rename/i })).toBeInTheDocument());
@@ -306,12 +324,14 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
         // Reattach auto-navigates to the auto-rename panel; the progress label
         // reflects the running state (2 of 3: X) without clicking the tool card.
-        await waitFor(() => expect(screen.getByText(/Renaming 2 of 3: X/)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getAllByText(/Renaming 2 of 3: X/)[0]).toBeInTheDocument());
     });
 
     test('progress label clamps to the total when all batches have reported', async () => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /auto-rename/i })); });
 
@@ -322,13 +342,15 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
             filed: 3, total: 3, currentUid: 'c2', currentLabel: 'X',
             results: [], skipped: [],
         });
-        expect(screen.getByText(/Renaming 3 of 3/)).toBeInTheDocument();
+        expect(screen.getAllByText(/Renaming 3 of 3/)[0]).toBeInTheDocument();
         expect(screen.queryByText(/Renaming 4 of 3/)).not.toBeInTheDocument();
     });
 
     test('progress bar starts determinate at 0% instead of the full-width shimmer', async () => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /auto-rename/i })); });
 
@@ -345,7 +367,9 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
 
     const driveToDone = async (overrides = {}) => {
         await renderOpenModal();
+        fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Auto rename collections'));
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => screen.getByRole('button', { name: /auto-rename/i }));
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /auto-rename/i })); });
         await fireStorageChange({
@@ -362,6 +386,7 @@ describe('AIToolsModal – Auto-Rename driven by the service worker', () => {
             ] },
             ...overrides,
         });
+        if (screen.queryByRole('button', { name: 'View details' })) fireEvent.click(screen.getByRole('button', { name: 'View details' }));
     };
 
     test('done panel renders a per-row undo button that sends aiUndoItems for that uid', async () => {

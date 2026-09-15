@@ -73,6 +73,7 @@ const SETTINGS_TOGGLES = [
 // Extra search keywords per AI tool (the visible label comes from AI_TOOLS).
 // All include "ai" so the whole group surfaces when the user types "ai".
 const AI_ACTION_KEYWORDS = {
+    'task-planner': 'ai task planner plan chat collect gather research trip build collection websites',
     'smart-organize': 'ai smart tab grouping organize group window loose tabs',
     'auto-rename': 'ai auto rename collections name suggest title',
     'auto-arrange-folders': 'ai auto arrange folders sort organize loose collections',

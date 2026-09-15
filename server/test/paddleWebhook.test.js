@@ -75,6 +75,12 @@ describe('buildSubscriptionRecord', () => {
     expect(buildSubscriptionRecord(subEvent({ scheduled_change: null }), PRICES).record.scheduled_cancel_at).toBeNull();
   });
 
+  it('maps the no-trial twin prices to the same plans', () => {
+    const prices = { ...PRICES, monthlyNoTrial: 'pri_mnt', annualNoTrial: 'pri_ant' };
+    expect(buildSubscriptionRecord(subEvent({ items: [{ price: { id: 'pri_mnt' } }] }), prices).record.plan).toBe('monthly');
+    expect(buildSubscriptionRecord(subEvent({ items: [{ price: { id: 'pri_ant' } }] }), prices).record.plan).toBe('annual');
+  });
+
   it('maps annual price id and unknown price to plan null', () => {
     expect(buildSubscriptionRecord(subEvent({ items: [{ price: { id: 'pri_a' } }] }), PRICES).record.plan).toBe('annual');
     expect(buildSubscriptionRecord(subEvent({ items: [{ price: { id: 'pri_x' } }] }), PRICES).record.plan).toBeNull();

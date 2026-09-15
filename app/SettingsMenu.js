@@ -83,10 +83,6 @@ export default function SettingsMenu(props) {
         const { googleUser: storedGoogleUser } = await browser.storage.local.get('googleUser');
         setGoogleUser(storedGoogleUser || null);
 
-        const { theme } = await browser.storage.local.get('theme');
-        const isDarkMode = theme === 'dark';
-        await browser.storage.local.set({ darkModeToggle: isDarkMode });
-
         if (chkPerformanceMode === true) {
             document.documentElement.classList.add('performance-mode');
         } else {
@@ -154,12 +150,13 @@ export default function SettingsMenu(props) {
         return () => window.removeEventListener('tabox:open-restore-session', openSession);
     }, [sessionList]);
 
-    const handleDarkModeToggle = async () => {
-        const newMode = themeMode === 'dark' ? 'light' : 'dark';
-        const isDarkMode = newMode === 'dark';
+    const handleDarkModeToggle = async (isDarkMode) => {
+        const newMode = isDarkMode ? 'dark' : 'light';
 
         setThemeMode(newMode);
         document.documentElement.setAttribute('data-theme', newMode);
+        // darkModeToggle is a write-only mirror kept for backward compat;
+        // the switch renders from themeState, never from this key.
         await browser.storage.local.set({
             theme: newMode,
             darkModeToggle: isDarkMode,
@@ -400,7 +397,8 @@ export default function SettingsMenu(props) {
                     description: 'Switch Tabox between light and dark themes.',
                     switchProps: {
                         id: 'darkModeToggle',
-                        onMouseUp: handleDarkModeToggle,
+                        checked: themeMode === 'dark',
+                        onToggle: handleDarkModeToggle,
                         'data-tooltip-id': 'main-tooltip',
                         'data-tooltip-content': 'Toggle between light and dark theme',
                         textOn: <span><IoMoon size="16" style={{ marginRight: '8px' }} />Dark Mode: <strong>On</strong></span>,
@@ -467,7 +465,7 @@ export default function SettingsMenu(props) {
             key: 'ai',
             title: 'Tabox AI',
             icon: BsStars,
-            description: 'On-device AI features powered by Chrome’s built-in model. Nothing leaves your computer.',
+            description: 'Cloud AI features powered by Google Gemini 3.5 Flash Lite via OpenRouter. Only tab titles and URLs are sent for processing.',
             items: [
                 {
                     type: 'switch',
@@ -478,7 +476,7 @@ export default function SettingsMenu(props) {
                         id: 'chkTaboxAI',
                         onBeforeChange: handleTaboxAIBeforeChange,
                         'data-tooltip-id': 'main-tooltip',
-                        'data-tooltip-content': 'Powered by DeepSeek V4 Flash via OpenRouter',
+                        'data-tooltip-content': 'Powered by Google Gemini 3.5 Flash Lite via OpenRouter',
                         textOn: <span><BsStars size="14" style={{ marginRight: '8px' }} />Tabox AI: <strong>Enabled</strong></span>,
                         textOff: <span><BsStars size="14" style={{ marginRight: '8px' }} />Tabox AI: <strong>Disabled</strong></span>,
                     },

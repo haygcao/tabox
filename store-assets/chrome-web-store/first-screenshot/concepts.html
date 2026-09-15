@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tabox Chrome Web Store — First Screenshot Concepts</title>
+  <style>
+    @font-face {
+      font-family: "Comfortaa";
+      src: url("fonts/Comfortaa-VariableFont_wght.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: block;
+    }
+
+    :root {
+      --navy: #07142f;
+      --blue: #1698e2;
+      --violet: #6657ff;
+      --purple: #8b5dff;
+      --orange: #ff8c42;
+      --white: #ffffff;
+      font-family: "Comfortaa", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #111522; }
+
+    .artboard {
+      position: relative;
+      width: 1280px;
+      height: 800px;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .bg,
+    .wash {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .bg { display: none; object-fit: cover; z-index: -3; }
+    .wash { z-index: -2; }
+
+    .brand {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      font-family: "Comfortaa", sans-serif;
+    }
+
+    .brand img { width: 68px; height: 68px; }
+    .brand-copy {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+    }
+
+    .brand-word {
+      color: inherit;
+      font-size: 40px;
+      line-height: 1;
+      font-weight: 560;
+      letter-spacing: -.8px;
+    }
+
+    .brand-slogan {
+      font-size: 20px;
+      line-height: 1.1;
+      font-weight: 520;
+      letter-spacing: -.15px;
+      white-space: nowrap;
+      background: linear-gradient(90deg, var(--purple) 0%, var(--blue) 52%, var(--orange) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .copy { position: absolute; width: 505px; }
+    h1 {
+      margin: 0;
+      max-width: 540px;
+      font-size: 64px;
+      line-height: .99;
+      font-weight: 700;
+      letter-spacing: -3.2px;
+    }
+
+    .subhead {
+      max-width: 470px;
+      margin: 26px 0 0;
+      font-size: 21px;
+      line-height: 1.45;
+      letter-spacing: -.35px;
+    }
+
+    .benefits {
+      display: flex;
+      gap: 10px;
+      margin-top: 31px;
+    }
+
+    .benefit {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .benefit i {
+      width: 8px;
+      height: 8px;
+      border-radius: 3px;
+      background: currentColor;
+      transform: rotate(12deg);
+    }
+
+    .ui-shell {
+      position: absolute;
+      overflow: hidden;
+      border-radius: 20px;
+      background: rgba(255,255,255,.96);
+      box-shadow: 0 35px 85px rgba(7, 20, 47, .28), 0 8px 22px rgba(7, 20, 47, .13);
+    }
+
+    .ui-bar {
+      height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 14px;
+      background: rgba(249,250,253,.98);
+      border-bottom: 1px solid rgba(7,20,47,.08);
+    }
+
+    .ui-bar i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .ui-bar i:nth-child(1) { background: #ff766b; }
+    .ui-bar i:nth-child(2) { background: #ffc760; }
+    .ui-bar i:nth-child(3) { background: #4ed09b; }
+
+    .ui-title {
+      margin-left: 6px;
+      color: #7c8497;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .35px;
+    }
+
+    .ui-shell > img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .float-card {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 14px 17px;
+      border: 1px solid rgba(255,255,255,.54);
+      border-radius: 16px;
+      background: rgba(255,255,255,.82);
+      box-shadow: 0 18px 45px rgba(7,20,47,.2);
+      -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(16px);
+      color: var(--navy);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .float-card span {
+      display: grid;
+      place-items: center;
+      width: 31px;
+      height: 31px;
+      border-radius: 10px;
+      color: #fff;
+      background: linear-gradient(145deg, var(--blue), var(--violet));
+      font-size: 17px;
+    }
+
+    /* A — airy editorial */
+    #variant-a {
+      background:
+        radial-gradient(circle at 88% 16%, rgba(102, 87, 255, .10), transparent 34%),
+        linear-gradient(135deg, #FCFDFF 0%, #F7F9FD 58%, #EDF3FF 100%);
+    }
+    #variant-a .wash {
+      background: linear-gradient(90deg, rgba(255,255,255,.24) 0%, transparent 58%);
+    }
+    #variant-a .brand { top: 50px; left: 62px; color: var(--navy); }
+    #variant-a .copy { top: 174px; left: 62px; color: var(--navy); }
+    #variant-a .subhead { color: #4d5872; }
+    #variant-a .benefit { color: #3054c8; background: rgba(80,102,230,.1); border: 1px solid rgba(80,102,230,.16); }
+    #variant-a .ui-shell { top: 146px; right: -112px; width: 722px; transform: rotate(1.3deg); }
+    #variant-a .float-card { right: 492px; bottom: 92px; transform: rotate(-2deg); }
+
+    /* B — night flow */
+    #variant-b {
+      background:
+        radial-gradient(circle at 91% 14%, rgba(102, 87, 255, .24), transparent 35%),
+        linear-gradient(135deg, #040713 0%, #07142F 66%, #0B2855 100%);
+    }
+    #variant-b .wash {
+      background: linear-gradient(90deg, rgba(0,0,0,.12) 0%, transparent 60%);
+    }
+    #variant-b .brand { top: 51px; left: 62px; color: #fff; }
+    #variant-b .copy { top: 170px; left: 62px; color: #fff; }
+    #variant-b .subhead { color: #c9d3ee; }
+    #variant-b .benefits { gap: 27px; }
+    #variant-b .benefit { gap: 8px; padding: 0; color: #F3F6FF; background: none; border: 0; border-radius: 0; font-size: 14px; }
+    #variant-b .benefit-icon { width: 21px; height: 21px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+    #variant-b .benefit:nth-child(1) .benefit-icon { color: #4FACFE; }
+    #variant-b .benefit:nth-child(2) .benefit-icon { color: #9B7BFF; }
+    #variant-b .benefit:nth-child(3) .benefit-icon { color: #FF9A5A; }
+    #variant-b .ui-shell { top: 102px; right: -220px; width: 900px; border: 1px solid rgba(145,132,255,.36); transform: none; box-shadow: 0 38px 95px rgba(0,0,0,.5), 0 0 54px rgba(77,91,255,.22); }
+    #variant-b .ui-bar { background: #17191E; border-bottom-color: #2B2F37; }
+    #variant-b .ui-title { color: #9DA6B6; }
+
+    /* C — modular graphic */
+    #variant-c {
+      background:
+        radial-gradient(circle at 86% 10%, rgba(64, 198, 255, .20), transparent 32%),
+        linear-gradient(135deg, #081238 0%, #102D83 58%, #155FC2 100%);
+    }
+    #variant-c .wash {
+      background: linear-gradient(90deg, rgba(3,10,45,.16) 0%, transparent 62%);
+    }
+    #variant-c .brand { top: 50px; left: 62px; color: #fff; }
+    #variant-c .copy { top: 168px; left: 62px; width: 505px; color: #fff; }
+    #variant-c .subhead { color: #dce5ff; }
+    #variant-c .benefit { color: #fff; background: rgba(10,24,94,.36); border: 1px solid rgba(255,255,255,.2); }
+    #variant-c .ui-shell { top: 144px; right: -126px; width: 708px; transform: rotate(.8deg); box-shadow: 0 42px 90px rgba(0,11,62,.45); }
+    #variant-c .float-card { right: 449px; bottom: 72px; }
+
+    /* D — sunrise calm */
+    #variant-d {
+      background:
+        radial-gradient(circle at 5% 8%, rgba(255, 140, 66, .16), transparent 34%),
+        linear-gradient(135deg, #FFF8F3 0%, #FAFBFF 55%, #E8F4FF 100%);
+    }
+    #variant-d .wash {
+      background: linear-gradient(90deg, rgba(255,255,255,.14) 0%, transparent 62%);
+    }
+    #variant-d .brand { top: 50px; left: 62px; color: var(--navy); }
+    #variant-d .copy { top: 168px; left: 62px; color: var(--navy); }
+    #variant-d .subhead { color: #4e586f; }
+    #variant-d .benefit { color: #3156ba; background: rgba(255,255,255,.56); border: 1px solid rgba(255,255,255,.72); }
+    #variant-d .ui-shell { top: 144px; right: -92px; width: 708px; transform: rotate(-.7deg); box-shadow: 0 36px 88px rgba(40,79,135,.28); }
+    #variant-d .float-card { right: 479px; bottom: 84px; }
+  </style>
+</head>
+<body>
+  <section class="artboard" id="variant-a">
+    <img class="bg" src="backgrounds/variant-a-editorial.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="copy">
+      <h1>Save your tabs.<br>Clear your mind.</h1>
+      <p class="subhead">Turn tab overload into organized collections you can reopen in one click.</p>
+      <div class="benefits"><span class="benefit"><i></i>Save</span><span class="benefit"><i></i>Organize</span><span class="benefit"><i></i>Reopen</span></div>
+    </div>
+    <div class="ui-shell"><div class="ui-bar"><i></i><i></i><i></i><span class="ui-title">TABOX · ALL COLLECTIONS</span></div><img src="tabox-ui-source.png" alt="Tabox full-page interface"></div>
+    <div class="float-card"><span>✓</span>8 collections · 34 tabs</div>
+  </section>
+
+  <section class="artboard" id="variant-b">
+    <img class="bg" src="backgrounds/variant-b-night-flow.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="copy">
+      <h1>Save your tabs.<br>Clear your mind.</h1>
+      <p class="subhead">Turn tab overload into organized collections you can reopen in one click.</p>
+      <div class="benefits">
+        <span class="benefit"><svg class="benefit-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"></path><path d="m8 10 4 4 4-4"></path><path d="M5 18v2h14v-2"></path></svg>Save</span>
+        <span class="benefit"><svg class="benefit-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Organize</span>
+        <span class="benefit"><svg class="benefit-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4"></path><path d="M4 4h4"></path><path d="M4.7 7.2A8 8 0 1 1 4 14"></path></svg>Reopen</span>
+      </div>
+    </div>
+    <div class="ui-shell"><div class="ui-bar"><i></i><i></i><i></i><span class="ui-title">TABOX · ALL COLLECTIONS</span></div><img src="tabox-ui-source-dark.png" alt="Tabox full-page dark interface"></div>
+  </section>
+
+  <section class="artboard" id="variant-c">
+    <img class="bg" src="backgrounds/variant-c-modular.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="copy">
+      <h1>Save your tabs.<br>Clear your mind.</h1>
+      <p class="subhead">Turn tab overload into organized collections you can reopen in one click.</p>
+      <div class="benefits"><span class="benefit"><i></i>Save</span><span class="benefit"><i></i>Organize</span><span class="benefit"><i></i>Reopen</span></div>
+    </div>
+    <div class="ui-shell"><div class="ui-bar"><i></i><i></i><i></i><span class="ui-title">TABOX · ALL COLLECTIONS</span></div><img src="tabox-ui-source.png" alt="Tabox full-page interface"></div>
+    <div class="float-card"><span>✓</span>8 collections · 34 tabs</div>
+  </section>
+
+  <section class="artboard" id="variant-d">
+    <img class="bg" src="backgrounds/variant-d-sunrise.png" alt="">
+    <div class="wash"></div>
+    <div class="brand"><img src="../../../chrome/icons/icon128.png" alt=""><div class="brand-copy"><span class="brand-word">Tabox</span><span class="brand-slogan">Organize Beautifully</span></div></div>
+    <div class="copy">
+      <h1>Save your tabs.<br>Clear your mind.</h1>
+      <p class="subhead">Turn tab overload into organized collections you can reopen in one click.</p>
+      <div class="benefits"><span class="benefit"><i></i>Save</span><span class="benefit"><i></i>Organize</span><span class="benefit"><i></i>Reopen</span></div>
+    </div>
+    <div class="ui-shell"><div class="ui-bar"><i></i><i></i><i></i><span class="ui-title">TABOX · ALL COLLECTIONS</span></div><img src="tabox-ui-source.png" alt="Tabox full-page interface"></div>
+    <div class="float-card"><span>✓</span>8 collections · 34 tabs</div>
+  </section>
+</body>
+</html>

@@ -96,7 +96,7 @@ No API keys are bundled with the extension. All secrets (Google OAuth client sec
 - AI Tools modal actions open `AIToolsModal` pre-navigated to a tool via the `aiToolsInitialToolState` atom (App's `cmdOpenAiTool` → `onOpenAiTool` prop). Add a new AI tool to `AI_TOOLS` and it should also get an `AI_ACTIONS` keyword entry so it surfaces in the palette.
 
 ### AI tasks (MUST run in the service worker)
-- AI features use DeepSeek V4 Flash via OpenRouter, proxied through the Tabox Worker's `POST /ai/complete` (`server/src/aiProxy.js`) — the extension NEVER holds the OpenRouter key. The Worker authenticates the caller's Google token, rate-limits per user, and pins the model/max_tokens server-side. `chrome/ai-client.js` (SW) calls the Worker with `getAuthToken()`; `app/ai/aiClient.js` (popup) relays through the SW via the `aiComplete` message — keep the two session interfaces in sync. Tabox AI works in every Chromium browser but requires being signed in to Tabox (availability `'sign-in-required'`).
+- AI features use Google Gemini 3.5 Flash Lite via OpenRouter (model pinned server-side in `server/src/aiProxy.js`), proxied through the Tabox Worker's `POST /ai/complete` (`server/src/aiProxy.js`) — the extension NEVER holds the OpenRouter key. The Worker authenticates the caller's Google token, rate-limits per user, and pins the model/max_tokens server-side. `chrome/ai-client.js` (SW) calls the Worker with `getAuthToken()`; `app/ai/aiClient.js` (popup) relays through the SW via the `aiComplete` message — keep the two session interfaces in sync. Tabox AI works in every Chromium browser but requires being signed in to Tabox (availability `'sign-in-required'`).
 - **Every AI task's long-running work must execute in the service worker** (`chrome/background.js` / `background-utils.js`), driven by `browser.runtime.sendMessage` from the popup — so closing the popup does NOT abort it. The popup only initiates the task, observes progress, and renders results; it is a detachable observer, never the owner of the work.
 - Persist progress/state to `chrome.storage.local` (like `SMART_ORGANIZE_UNDO_KEY` / `AUTO_ARRANGE_UNDO_KEY`) so a reopened popup can reattach and re-render progress. Push updates back via messages / `storage.onChanged`.
 - Follow the existing `smartOrganizeApply` handler (`background-utils.js`) as the reference pattern. Respect MV3 SW constraints: keep the message handler awaiting the work; never defer it to a standalone `setTimeout` (the worker can be discarded).
@@ -128,6 +128,7 @@ No API keys are bundled with the extension. All secrets (Google OAuth client sec
 - Webpack splits vendor chunks (React, UI libs, dnd-kit)
 - Release builds strip `console.log` via Terser
 - After any code change, always run `yarn prod` before considering the work complete
+- Marketing site & pricing page: **tabox.co is a Next.js app on Vercel** (`~/Projects/tabox-homepage`, deploys on push to its `main`) — the old Wix site is retired and this repo's `site/pricing/` builder has been deleted. The live Paddle checkout lives in that repo's `app/pro/ProPricing.js` (live client token + the four `pri_` ids, trial vs no-trial chosen from the Worker's `GET /checkout/eligibility`); keep those ids in sync with `server/wrangler.toml`. No manual copy-paste step exists any more.
 
 ## Git & Registry Rules
 

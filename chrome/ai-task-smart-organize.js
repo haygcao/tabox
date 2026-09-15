@@ -11,7 +11,7 @@ const def = {
         const capped = ungroupedTabs.slice(0, planners.ORGANIZE_MAX_TABS);
         const skippedTabIds = ungroupedTabs.slice(planners.ORGANIZE_MAX_TABS).map((t) => t.tabId);
         await report({ progress: 25, currentLabel: 'Step 2 of 3: Asking AI to group tabs…' });
-        const session = await client.createAISession({ systemPrompt: 'You group browser tabs by topic. Group names are short, specific, Title Case, no quotes or emojis.', temperature: 0 });
+        const session = await client.createAISession({ systemPrompt: 'You group browser tabs by topic. Group names are short, specific, Title Case, no quotes or emojis.', temperature: 0, action: 'smart-organize' });
         let raw;
         try {
             await report({ progress: 35, currentLabel: 'Step 2 of 3: Asking AI to group tabs…' });

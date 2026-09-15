@@ -7,6 +7,12 @@
     max-width: min(94vw, 560px);
 }
 
+/* Launched from inside the AI Tools modal too (Task Planner's share chip) —
+   its overlay sits at 1000000, so this one must stack above it. */
+.share-collection-link-overlay {
+    z-index: 1000001;
+}
+
 .share-collection-link-body {
     padding: 16px 20px 20px;
 }

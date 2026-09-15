@@ -33,6 +33,7 @@ export async function suggestCollectionName(collection, { signal } = {}) {
         systemPrompt: 'You name groups of browser tabs. Names are short (2-4 words), specific, and in Title Case. Never include quotes or emojis.',
         temperature: 0.7,
         topK: 3,
+        action: 'suggest-collection-name',
         ...(signal ? { signal } : {}),
     });
     try {

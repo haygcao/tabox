@@ -32,7 +32,7 @@ const def = {
         // (system prompt + that batch only), so concurrent use is safe. The run's
         // abort signal rides along so aiCancel aborts in-flight fetches too, not
         // just future batches.
-        const session = await client.createAISession({ systemPrompt: 'You name groups of browser tabs. Names are short (2-4 words), specific, and in Title Case. Never include quotes or emojis.', temperature: 0, signal });
+        const session = await client.createAISession({ systemPrompt: 'You name groups of browser tabs. Names are short (2-4 words), specific, and in Title Case. Never include quotes or emojis.', temperature: 0, signal, action: 'auto-rename' });
 
         async function worker() {
             for (;;) {

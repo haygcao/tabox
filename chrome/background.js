@@ -30,6 +30,9 @@ if (typeof importScripts === 'function') {
     importScripts('ai-task-duplicate-sweep.js');
     importScripts('split-collection.js');
     importScripts('ai-task-split-collection.js');
+    importScripts('task-planner-core.js');
+    importScripts('ai-hub-core.js');
+    importScripts('task-planner.js');
   }
   catch (e) {
     console.error(e);
@@ -196,7 +199,10 @@ async function ensureSharedSyncAlarm() {
 // changed. Named so it's directly testable without dispatching a real
 // PushEvent (which jsdom/jest can't construct).
 function handlePushEvent(event) {
-  event.waitUntil(syncSharedFolders());
+  // A tickle means the server knows something changed (folder edit or a new
+  // invite) — bypass the idle gate so an invitee with nothing local yet
+  // still learns about it immediately.
+  event.waitUntil(syncSharedFolders({ force: true }));
 }
 // `self` only exists in worker/window contexts — not in Node (Jest), where
 // requiring this module for unit tests would otherwise throw.
@@ -2164,6 +2170,10 @@ try {
         // subscription as its first step, so interactive login stops the
         // session from being stuck on 1-minute polling forever.
         if (typeof ensureSharedSyncAlarm === 'function') await ensureSharedSyncAlarm();
+        // Fresh sign-in (incl. a second device): drop the idle-poll stamp so
+        // the first cycle fetches this account's shared folders/invites now
+        // rather than up to an hour later.
+        await browser.storage.local.remove('shared_idle_poll');
 
         // Sign-out wipes the cached Pro entitlement, and the `cached &&`
         // zero-Worker-calls guards mean nothing would ever restore it — a Pro
@@ -2331,6 +2341,7 @@ try {
       const token = await getAuthToken();
       await browser.alarms.clear(BACKGROUND_SYNC_ALARM);
       await teardownPushSubscription();
+      await browser.storage.local.remove('shared_idle_poll');
       if (token === false) {
         // premiumEntitlement/proCheckoutPendingUntil belong to the signed-out
       // account — clearing them here prevents the next account from inheriting
@@ -2459,6 +2470,10 @@ try {
 
     if (request.type === 'splitCollectionApply') {
       const result = await globalThis.TaboxSplitCollection.applySplitCollectionPlan(request.payload || {});
+      if (result.success) await globalThis.TaboxTaskPlanner.recordHubResult({
+        id: result.opId, tool: 'split-collection', clearAction: true,
+        text: `Split into ${(request.payload?.plan?.groups || []).length} collections. Your changes are saved.`,
+      });
       await throttleSync(() => handleRemoteUpdate());
       return Promise.resolve(result);
     }
@@ -2512,6 +2527,10 @@ try {
       try {
         result = await engine.runTask({ id: request.task, params: request.params || {}, signal: controller.signal });
       } finally { globalThis.__aiAbort = null; }
+      await globalThis.TaboxTaskPlanner.recordHubResult({ id: result.taskId,
+        tool: request.task === 'auto-arrange' ? 'auto-arrange-folders' : request.task,
+        text: result.summary || (result.status === 'cancelled' ? 'Task cancelled.' : result.status === 'error' ? 'The task failed. You can try again.' : 'Ready to review.'),
+      });
       return Promise.resolve(result); // engine maps throw/abort to status:error/cancelled
     }
     if (request.type === 'aiCancel') {
@@ -2542,6 +2561,7 @@ try {
           systemPrompt: payload.systemPrompt,
           temperature: payload.temperature,
           topK: payload.topK,
+          action: payload.action,
         });
         const content = await session.prompt(payload.prompt, { responseConstraint: payload.responseConstraint });
         return Promise.resolve({ ok: true, content });
@@ -2572,6 +2592,69 @@ try {
         state = await globalThis.TaboxAIEngine.finalizeInterrupted();
       }
       return Promise.resolve(state || null);
+    }
+
+    // ── Task Planner ───────────────────────────────────────────────────────
+    // Chat-style AI tool. All session state lives in chrome.storage.local
+    // ('taskPlannerSession', owned by chrome/task-planner.js); the popup is a
+    // detachable observer via storage.onChanged. Every handler awaits its work
+    // inline (MV3 — a detached timeout could die with this worker) and replies
+    // { ok: true, state } or { ok: false, error }. Payload fields live under
+    // request.payload.
+    if (request.type === 'taskPlannerGetState') {
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerGetState());
+    }
+    if (request.type === 'taskPlannerStart') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerStart({
+        force: !!payload.force,
+        // Reply as soon as the session exists — opening the hub and "New Chat"
+        // must never wait on the suggestion-pill AI call. Pills keep generating
+        // here in the worker and land via storage.onChanged.
+        deferPills: true,
+        // Loose-collection summaries seed the suggestion pills; 3 titles per
+        // collection is plenty — pills need themes, not full contents.
+        loadSummaries: () => loadLooseCollectionSummariesBG(3),
+      }));
+    }
+    if (request.type === 'taskPlannerRefreshPills') {
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerRefreshPills({
+        hub: !!request.payload?.hub,
+        loadSummaries: () => loadLooseCollectionSummariesBG(3),
+      }));
+    }
+    if (request.type === 'taskPlannerSend') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerSend({
+        text: payload.text, hub: !!payload.hub, action: payload.action,
+        activeTool: payload.activeTool, scope: payload.scope,
+        loadCollections: () => loadAllCollectionsBG(true),
+      }));
+    }
+    if (request.type === 'taskPlannerRemoveTab') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerRemoveTab({
+        groupUid: payload.groupUid,
+        tabUid: payload.tabUid,
+      }));
+    }
+    if (request.type === 'taskPlannerLoadCollection') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerLoadCollection({
+        uid: payload.uid,
+        name: payload.name,
+        groups: payload.groups,
+      }));
+    }
+    if (request.type === 'taskPlannerMarkSaved') {
+      const payload = request.payload || {};
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerMarkSaved({
+        uid: payload.uid,
+        name: payload.name,
+      }));
+    }
+    if (request.type === 'taskPlannerReset') {
+      return Promise.resolve(await globalThis.TaboxTaskPlanner.taskPlannerReset());
     }
 
   });

@@ -30,6 +30,7 @@ const def = {
             systemPrompt: 'You organize saved browser tabs into themed sub-collections. Names are short, specific, Title Case, no quotes or emojis.',
             temperature: 0,
             signal,
+            action: 'split-collection',
         });
         let raw;
         try {

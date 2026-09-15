@@ -34,6 +34,7 @@ const fireStorageChange = async (newValue) => {
     await act(async () => {
         storageListeners.forEach((fn) => fn({ aiTaskState: { newValue } }, 'local'));
     });
+    if (screen.queryByRole('button', { name: 'View details' })) fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 };
 
 const DONE_STATE = {
@@ -51,17 +52,21 @@ function renderModal() {
     store.set(aiToolsModalOpenState, true);
     store.set(aiToolsScopeState, { type: 'all' });
     store.set(premiumEntitlementState, PRO);
-    return render(
+    const rendered = render(
         <Provider store={store}>
             <AIToolsModal updateRemoteData={jest.fn()} />
         </Provider>
     );
+    fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
+    return rendered;
 }
 
 const openArrangePanel = async () => {
+    if (!screen.queryByRole('button', { name: /Auto-arrange into folders/i })) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
     await waitFor(() => expect(screen.getByRole('button', { name: /Auto-arrange into folders/i })).not.toBeDisabled());
     const card = screen.getByRole('button', { name: /Auto-arrange into folders/i });
     await act(async () => { fireEvent.click(card); });
+    fireEvent.click(screen.getByRole('button', { name: 'View details' }));
     return screen.findByRole('button', { name: /Arrange now/i });
 };
 
@@ -83,13 +88,15 @@ beforeEach(() => {
     });
 });
 
-test('auto-arrange card is disabled when there are no root collections', async () => {
+test('auto-arrange explains in chat when there are no root collections', async () => {
     loadAllCollections.mockResolvedValue([
         { uid: 'c1', name: 'A', parentId: 'f1', tabs: [{ title: 't' }] },
     ]);
     renderModal();
     const card = await screen.findByRole('button', { name: /Auto-arrange into folders/i });
-    expect(card).toBeDisabled();
+    fireEvent.click(card);
+    await screen.findByText(/no loose collections to organize/i);
+    expect(screen.queryByRole('region', { name: 'AI action' })).not.toBeInTheDocument();
 });
 
 test('clicking Arrange now dispatches aiRun(auto-arrange) with empty params', async () => {
@@ -112,7 +119,7 @@ test('a done aiTaskState change renders the summary and fires the undo toast', a
 
     await fireStorageChange(DONE_STATE);
 
-    await screen.findByText(/Filed 3 collections/i);
+    await screen.findAllByText(/Filed 3 collections/i);
 
     expect(showUndoToast).toHaveBeenCalledTimes(1);
     const [, message, title, undoFn] = showUndoToast.mock.calls[0];
@@ -150,6 +157,7 @@ test('persistent "Undo last arrange" button appears for a done auto-arrange and 
     const doneUndo = await screen.findByRole('button', { name: /^Undo$/i });
     await act(async () => { fireEvent.click(doneUndo); });
 
+    if (screen.queryByRole('button', { name: 'View details' })) fireEvent.click(screen.getByRole('button', { name: 'View details' }));
     const persistent = await screen.findByRole('button', { name: /Undo last arrange/i });
     browser.runtime.sendMessage.mockClear();
     await act(async () => { fireEvent.click(persistent); });
@@ -210,7 +218,7 @@ test('a done aiTaskState change fires onDataUpdate exactly once (explicit UI ref
 
     expect(onDataUpdate).not.toHaveBeenCalled();
     await fireStorageChange(DONE_STATE);
-    await screen.findByText(/Filed 3 collections/i);
+    await screen.findAllByText(/Filed 3 collections/i);
     expect(onDataUpdate).toHaveBeenCalledTimes(1);
 
     // Re-delivering the same done state (re-render / duplicate event) must not
@@ -251,7 +259,7 @@ test('the done-panel Undo button refreshes data via onDataUpdate after the undo 
     const arrangeBtn = await openArrangePanel();
     await act(async () => { fireEvent.click(arrangeBtn); });
     await fireStorageChange(DONE_STATE);
-    await screen.findByText(/Filed 3 collections/i);
+    await screen.findAllByText(/Filed 3 collections/i);
     onDataUpdate.mockClear();
 
     const undoBtn = await screen.findByRole('button', { name: /^Undo$/i });
@@ -274,7 +282,7 @@ test('the undo toast callback refreshes data via onDataUpdate after the undo com
     const arrangeBtn = await openArrangePanel();
     await act(async () => { fireEvent.click(arrangeBtn); });
     await fireStorageChange(DONE_STATE);
-    await screen.findByText(/Filed 3 collections/i);
+    await screen.findAllByText(/Filed 3 collections/i);
     onDataUpdate.mockClear();
 
     const undoFn = showUndoToast.mock.calls[0][3];
@@ -299,6 +307,7 @@ test('the persistent "Undo last arrange" button refreshes data via onDataUpdate'
     const doneUndo = await screen.findByRole('button', { name: /^Undo$/i });
     await act(async () => { fireEvent.click(doneUndo); });
 
+    if (screen.queryByRole('button', { name: 'View details' })) fireEvent.click(screen.getByRole('button', { name: 'View details' }));
     const persistent = await screen.findByRole('button', { name: /Undo last arrange/i });
     onDataUpdate.mockClear();
     await act(async () => { fireEvent.click(persistent); });

@@ -63,6 +63,20 @@ describe('ai-client module (SW → Worker proxy)', () => {
     expect(JSON.stringify(body)).not.toContain('sk-or');
   });
 
+  test('sends the session action label to the Worker and omits it when not set', async () => {
+    global.fetch = mockFetch();
+    const client = loadClient();
+    const tagged = await client.createAISession({ systemPrompt: 'sys', action: 'auto-rename' });
+    await tagged.prompt('hi');
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).action).toBe('auto-rename');
+    const untagged = await client.createAISession({ systemPrompt: 'sys' });
+    await untagged.prompt('hi');
+    expect(JSON.parse(global.fetch.mock.calls[1][1].body)).not.toHaveProperty('action');
+    const chat = await client.requestChatCompletion([{ role: 'user', content: 'x' }], { action: 'planner-turn' });
+    expect(chat).toBeDefined();
+    expect(JSON.parse(global.fetch.mock.calls[2][1].body).action).toBe('planner-turn');
+  });
+
   test('promptForJSON sends the schema as response_format and parses the reply', async () => {
     global.fetch = mockFetch({ body: { content: '{"name":"Reading"}' } });
     const { createAISession, promptForJSON } = loadClient();

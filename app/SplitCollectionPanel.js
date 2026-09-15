@@ -1,3 +1,4 @@
+import AIHubActionCard from './ai/AIHubActionCard';
 import React, { useState, useEffect } from 'react';
 import { MdFolder, MdExpandMore, MdChevronRight } from 'react-icons/md';
 import { SPLIT_MIN_TABS, FALLBACK_FAVICON, safeFavIconUrl } from './utils/sharedConstants';
@@ -9,6 +10,7 @@ import './SplitCollectionPanel.css';
 const MAX_TABS_SHOWN = 8;
 
 function SplitCollectionPanel({
+    compact = false,
     collections = [],
     target,
     aiTaskState,
@@ -56,7 +58,7 @@ function SplitCollectionPanel({
         const total = aiTaskState?.total || 0;
         return (
             <div className="split-panel split-panel--running">
-                <SplitScanAnimation />
+                {!compact && <SplitScanAnimation />}
                 <p className="split-panel-status">
                     Scanning tabs and proposing sub-collections…
                     {filed > 0 && total > 0 && (
@@ -122,7 +124,7 @@ function SplitCollectionPanel({
             setCollapsed(prev => ({ ...prev, [i]: !prev[i] }));
         };
 
-        return (
+        const review = (
             <div className="split-panel split-panel--results">
                 <p className="split-panel-status">
                     Review the {groups.length} sub-collections below, then confirm to replace the original.
@@ -188,6 +190,7 @@ function SplitCollectionPanel({
                                     )}
                                 </div>
                             );
+
                         })}
                     </div>
                 </div>
@@ -248,6 +251,12 @@ function SplitCollectionPanel({
                 </div>
             </div>
         );
+        return compact ? <AIHubActionCard title={`${groups.length} smaller collections`}
+            description={`Replaces the original with ${groups.map((g, i) => names[i] || g.name).join(' · ')}`}
+            primary={{ label: 'Confirm split', onClick: handleConfirm, disabled: submitting || busy }}>
+            <p>Applying replaces the original collection. Edit names and folder options below.</p>
+            {review}
+        </AIHubActionCard> : review;
     }
 
     // ── Target set but no results yet ────────────────────────────────────────

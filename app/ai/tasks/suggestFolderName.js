@@ -35,6 +35,7 @@ export async function suggestFolderName(input, { signal } = {}) {
         systemPrompt: 'You name folders that group browser-tab collections. Names are short (2-4 words), specific, and in Title Case. Never include quotes or emojis.',
         temperature: 0.7,
         topK: 3,
+        action: 'suggest-folder-name',
         ...(signal ? { signal } : {}),
     });
     try {

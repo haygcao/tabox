@@ -1,6 +1,7 @@
 // Thin popup-side AI wrapper. Inference runs in the service worker
 // (`aiComplete` message → chrome/ai-client.js → the Tabox Worker's
-// /ai/complete proxy → OpenRouter DeepSeek V4 Flash), so the popup never
+// /ai/complete proxy → OpenRouter, model pinned server-side in
+// server/src/aiProxy.js), so the popup never
 // handles auth tokens and the OpenRouter API key never ships in the
 // extension. Every Tabox AI feature goes through this module so the
 // underlying provider or execution context can change without touching
@@ -26,14 +27,16 @@ export async function getAIAvailability() {
 // Sessions are stateless request builders: each prompt sends only the system
 // prompt + that prompt (no accumulated context), so repeated prompts on one
 // session don't get slower or costlier over a long run.
-export async function createAISession({ systemPrompt, temperature, topK, signal } = {}) {
+// `action` names the calling feature for the Worker's usage analytics
+// (relayed through the SW's aiComplete handler); it never affects the prompt.
+export async function createAISession({ systemPrompt, temperature, topK, signal, action } = {}) {
     return {
         prompt: (text, options = {}) => requestCompletion(
-            { systemPrompt, temperature, topK },
+            { systemPrompt, temperature, topK, action },
             text,
             { ...options, signal: options.signal || signal },
         ),
-        clone: () => createAISession({ systemPrompt, temperature, topK, signal }),
+        clone: () => createAISession({ systemPrompt, temperature, topK, signal, action }),
         destroy: () => {},
     };
 }
@@ -57,6 +60,7 @@ async function requestCompletion(config, text, { responseConstraint, signal } = 
             topK: config.topK,
             prompt: text,
             responseConstraint,
+            action: config.action,
         },
     });
     // The SW request can't be cancelled through sendMessage — for these small

@@ -22,7 +22,7 @@ export const CURRENT_STORAGE_VERSION = 3;
 export const FALLBACK_FAVICON = './images/favicon-fallback.png';
 
 // A collection must have at least this many tabs to qualify for AI splitting.
-export const SPLIT_MIN_TABS = 30;
+export { SPLIT_MIN_TABS } from '../../chrome/ai-hub-core';
 
 /**
  * Returns `url` if it's safe to use as an <img src> for a favicon (protocol

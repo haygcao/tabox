@@ -31,6 +31,7 @@ const fireStorageChange = async (newValue) => {
     await act(async () => {
         storageListeners.forEach((fn) => fn({ aiTaskState: { newValue } }, 'local'));
     });
+    if (screen.queryByRole('button', { name: 'View details' })) fireEvent.click(screen.getByRole('button', { name: 'View details' }));
 };
 
 // The plan the SW writes into aiTaskState.results for a finished planning run.
@@ -54,6 +55,7 @@ const openModal = async () => {
     await act(async () => {
         render(<Provider store={store}><AIToolsModal updateRemoteData={jest.fn()} /></Provider>);
     });
+    fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
     return store;
 };
 
@@ -80,7 +82,10 @@ describe('Smart Organize panel (popup)', () => {
 
     test('clicking organize dispatches aiRun(smart-organize) with the windowId', async () => {
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -94,7 +99,10 @@ describe('Smart Organize panel (popup)', () => {
 
     test('shows determinate service-worker progress while organizing tabs', async () => {
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -114,7 +122,10 @@ describe('Smart Organize panel (popup)', () => {
 
     test('a done plan state applies the plan, renders the summary, and fires the undo toast', async () => {
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -142,7 +153,10 @@ describe('Smart Organize panel (popup)', () => {
         });
 
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByRole('button', { name: /organize/i })).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -162,7 +176,10 @@ describe('Smart Organize panel (popup)', () => {
 
     test('the undo toast action sends smartOrganizeUndo', async () => {
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
 
@@ -177,7 +194,10 @@ describe('Smart Organize panel (popup)', () => {
 
     test('applies the plan only once even if the done state re-renders', async () => {
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
 
@@ -192,8 +212,10 @@ describe('Smart Organize panel (popup)', () => {
     test('disables run when there are no ungrouped tabs', async () => {
         readWindowStructure.mockResolvedValue({ ungroupedTabs: [], existingGroups: [], eligibleCount: 0 });
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
         await waitFor(() => expect(screen.getByText(/already grouped/i)).toBeInTheDocument());
+        expect(screen.queryByRole('region', { name: 'AI action' })).not.toBeInTheDocument();
     });
 
     test('"Save as collection" calls captureWindowSnapshot and persists grouped tabs', async () => {
@@ -215,7 +237,10 @@ describe('Smart Organize panel (popup)', () => {
             render(<Provider store={store}><AIToolsModal updateRemoteData={updateRemoteData} /></Provider>);
         });
 
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByRole('button', { name: /organize/i })).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -242,7 +267,10 @@ describe('Smart Organize panel (popup)', () => {
         });
 
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -252,14 +280,17 @@ describe('Smart Organize panel (popup)', () => {
 
         // apply was attempted but rejected
         await waitFor(() => expect(browser.runtime.sendMessage.mock.calls.some((c) => c[0].type === 'smartOrganizeApply')).toBe(true));
-        await waitFor(() => expect(screen.getByText(/could not apply the grouping/i)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getAllByText(/could not apply the grouping/i)[0]).toBeInTheDocument());
         // panel back to idle: the run button is available again
-        await waitFor(() => expect(screen.getByRole('button', { name: /organize/i })).toBeInTheDocument());
+        expect(screen.queryByRole('region', { name: 'AI action' })).not.toBeInTheDocument();
     });
 
     test('shows an error when the smart-organize plan fails in the SW', async () => {
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/2 ungrouped tabs/i)).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -268,9 +299,9 @@ describe('Smart Organize panel (popup)', () => {
         browser.runtime.sendMessage.mockClear();
         await fireStorageChange({ taskId: 'so-err', type: 'smart-organize', status: 'error', summary: 'planning failed' });
 
-        await waitFor(() => expect(screen.getByText(/an unexpected error occurred/i)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getAllByText(/an unexpected error occurred/i)[0]).toBeInTheDocument());
         // panel back to idle: the run button is available again
-        await waitFor(() => expect(screen.getByRole('button', { name: /organize/i })).toBeInTheDocument());
+        expect(screen.queryByRole('region', { name: 'AI action' })).not.toBeInTheDocument();
         // no apply was dispatched for an SW-error plan
         expect(browser.runtime.sendMessage.mock.calls.some((c) => c[0].type === 'smartOrganizeApply')).toBe(false);
     });
@@ -311,7 +342,10 @@ describe('Smart Organize — in-modal undo affordance', () => {
         useSmartOrganizeUndo.mockReturnValue({ snapshot: null, undo: undoFn, dismiss: jest.fn() });
 
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByRole('button', { name: /organize/i })).toBeInTheDocument());
 
         await act(async () => { fireEvent.click(screen.getByRole('button', { name: /organize/i })); });
@@ -334,7 +368,10 @@ describe('Smart Organize — in-modal undo affordance', () => {
         });
 
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByText(/undo last organize/i)).toBeInTheDocument());
 
         fireEvent.click(screen.getByText(/undo last organize/i));
@@ -346,7 +383,10 @@ describe('Smart Organize — in-modal undo affordance', () => {
         useSmartOrganizeUndo.mockReturnValue({ snapshot: null, undo: jest.fn(), dismiss: jest.fn() });
 
         await openModal();
+        if (!screen.queryByText('Smart Tab Grouping')) fireEvent.click(screen.getByRole('button', { name: 'More AI actions' }));
         fireEvent.click(screen.getByText('Smart Tab Grouping'));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'View details' })).toBeInTheDocument());
+        fireEvent.click(screen.getByRole('button', { name: 'View details' }));
         await waitFor(() => expect(screen.getByRole('button', { name: /organize/i })).toBeInTheDocument());
 
         expect(screen.queryByText(/undo last organize/i)).not.toBeInTheDocument();

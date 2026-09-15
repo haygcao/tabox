@@ -64,8 +64,9 @@ describe('AIToolsModal initial tool routing', () => {
             );
         });
 
-        // The tool panel shows a "Back to tools" button; the hub does not.
-        expect(await screen.findByLabelText('Back to tools')).toBeInTheDocument();
+        // A direct route now keeps the shared hub and composer in place.
+        expect(await screen.findByLabelText('Message Tabox AI')).toBeInTheDocument();
+        expect(screen.getByText('Tabox AI')).toBeInTheDocument();
         // The atom is consumed so reopening the hub later isn't hijacked.
         expect(store.get(aiToolsInitialToolState)).toBeNull();
     });

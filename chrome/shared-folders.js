@@ -25,6 +25,13 @@ const SHARED_SYNC_STATE_KEY = 'shared_sync_state';
 const SHARED_PENDING_INVITES_KEY = 'shared_pending_invites';
 const SHARED_EVENTS_KEY = 'shared_folder_events';
 const SHARED_PENDING_LINK_JOIN_KEY = 'shared_pending_link_join';
+// Cost control: a client with no local shared folders and no pending invites
+// is "idle" — it only needs the authoritative list (multi-device
+// rematerialization) and the invites check, and only about once an hour. The
+// 1-minute no-push alarm + the popup's 8s nudge otherwise cost two Worker
+// requests per tick per signed-in user, most of whom never share anything.
+const SHARED_IDLE_POLL_KEY = 'shared_idle_poll';
+const SHARED_IDLE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 
 // Task 9: shared folders/collections must never enter the Google Drive sync payload.
 // isSharedFolderRecord identifies a folder carrying the Task 8 `shared` marker;
@@ -757,9 +764,9 @@ async function respondToInvite({ folderId, accept }) {
 // instead of the literal same one. Returning the raw promise here preserves
 // reference identity, which is what callers rely on to detect coalescing.
 let sharedSyncInFlight = null;
-function syncSharedFolders() {
+function syncSharedFolders(options = {}) {
   if (sharedSyncInFlight) return sharedSyncInFlight;
-  sharedSyncInFlight = doSyncSharedFolders().finally(() => {
+  sharedSyncInFlight = doSyncSharedFolders(options).finally(() => {
     sharedSyncInFlight = null;
   });
   return sharedSyncInFlight;
@@ -772,10 +779,27 @@ function syncSharedFolders() {
 // was deleted) — convert the folder back to a plain local folder and record a
 // 'revoked' event for Task 15's toasts. Network/auth errors on pull just skip
 // that folder for this cycle; the next alarm tick tries again.
-async function doSyncSharedFolders() {
+async function doSyncSharedFolders({ force = false } = {}) {
   const { googleUser } = await browser.storage.local.get('googleUser');
   const myEmail = (googleUser?.emailAddress || '').toLowerCase();
   const folders = await loadLocalSharedFolders();
+
+  // Idle gate (see SHARED_IDLE_POLL_KEY). Pending invites keep the per-tick
+  // poll alive so an invitee sees accept/decline results promptly; `force`
+  // (push tickle, fresh login) always runs the full cycle. The stamp is only
+  // written on the cycle that actually goes to the network, so a failed
+  // cycle isn't silently deferred by an hour beyond the normal retry.
+  if (!folders.length && !force) {
+    const stored = await browser.storage.local.get([SHARED_PENDING_INVITES_KEY, SHARED_IDLE_POLL_KEY]);
+    const hasPendingInvites = (stored[SHARED_PENDING_INVITES_KEY]?.invites || []).length > 0;
+    if (!hasPendingInvites) {
+      const lastAt = stored[SHARED_IDLE_POLL_KEY]?.lastAt || 0;
+      if (Date.now() - lastAt < SHARED_IDLE_POLL_INTERVAL_MS) {
+        return { ok: true, data: { pulled: 0, pushed: 0, revoked: 0, idle: true } };
+      }
+      await browser.storage.local.set({ [SHARED_IDLE_POLL_KEY]: { lastAt: Date.now() } });
+    }
+  }
 
   // C2 review fix: reconcile against the server's authoritative "folders I
   // have access to" list BEFORE the per-folder loop below runs (`folders`,
@@ -1217,7 +1241,7 @@ async function handleSharedMessage(request) {
     case 'sharedRespondInvite':
       return respondToInvite(request);
     case 'sharedSyncNow':
-      return syncSharedFolders();
+      return syncSharedFolders(request.force ? { force: true } : {});
     case 'sharedDrainEvents':
       // Task 15 review: read-then-clear must be atomic so a popup drain can never race
       // another writer appending a new event between the read and the clear (which would
@@ -1273,6 +1297,8 @@ const sharedFoldersApi = {
   SHARED_PENDING_INVITES_KEY,
   SHARED_EVENTS_KEY,
   SHARED_PENDING_LINK_JOIN_KEY,
+  SHARED_IDLE_POLL_KEY,
+  SHARED_IDLE_POLL_INTERVAL_MS,
   handleShareLinkRedeem,
   isSharedFolderRecord,
   partitionSharedUids,

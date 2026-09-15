@@ -10,6 +10,10 @@ kv_namespaces = [
 GOOGLE_CLIENT_ID = "701423091804-t6v1r6mkl4jdptge49gb7sfstj4holfr.apps.googleusercontent.com"
 PRICE_MONTHLY = "pri_01kxk6xwxdgmtr2eat3xqacs3z"
 PRICE_ANNUAL = "pri_01kxk6xx37e1h9pdjvmvy457br"
+# No-trial twins of the two prices above (same amounts) — used when a returning
+# subscriber checks out again, so a second free trial is never granted.
+PRICE_MONTHLY_NOTRIAL = "pri_01m114qdwwa9att8vch4y4eav7"
+PRICE_ANNUAL_NOTRIAL = "pri_01m114qe06td8d2471bnyqw9d5"
 PADDLE_API_BASE = "https://api.paddle.com"
 VAPID_PUBLIC_KEY = "BApsYowPf5VhtXCdG_vnb6-GDt_HACafMtAsCsgPoubW_a8OX5wc8o6Jp9fyJzWeLCL3OQ399TCRXry1R8hXkqA"
 VAPID_SUBJECT = "mailto:support@tabox.co"
@@ -38,6 +42,8 @@ kv_namespaces = [
 GOOGLE_CLIENT_ID = "701423091804-t6v1r6mkl4jdptge49gb7sfstj4holfr.apps.googleusercontent.com"
 PRICE_MONTHLY = "pri_01kxmrtyxwk2x1qt6kxvbc57m1"
 PRICE_ANNUAL = "pri_01kxmrtz4894fc464tm48qjmvy"
+PRICE_MONTHLY_NOTRIAL = "pri_01m114qzw7nyn4vbp7e7pazd99"
+PRICE_ANNUAL_NOTRIAL = "pri_01m114r051tvcqc1d44zbrpv17"
 PADDLE_API_BASE = "https://sandbox-api.paddle.com"
 VAPID_PUBLIC_KEY = "BFKhknaosNAOD_YlEG-3eaGw2s3tYAfwh0hPbk1ZQOU1w4Loe8G1FKyir66KfaNuLnjPT7syrwvR5wB62X9OoO8"
 VAPID_SUBJECT = "mailto:support@tabox.co"

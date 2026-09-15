@@ -11,6 +11,16 @@
     max-width: 560px;
 }
 
+/* Task Planner needs room for chat + the collected-tabs side panel. The popup
+ * body is 670px wide, so with width:90% this resolves to ~603px effective. */
+.ai-tools-modal--planner {
+    max-width: 640px;
+}
+
+.ai-tools-modal--fullpage.ai-tools-modal--planner {
+    max-width: min(920px, 92vw);
+}
+
 .ai-tools-modal-content {
     display: flex;
     flex-direction: column;
@@ -361,6 +371,15 @@ html.performance-mode .ai-tool-card[data-tool-id="split-collection"]::before {
 .ai-tool-panel--split {
     flex: 1 1 auto;
     min-height: 0;
+}
+
+/* Task Planner fills the remaining modal height; the chat transcript and the
+ * collected-tabs list scroll internally (see TaskPlannerPanel.css — the
+ * min-height:0 chain continues inside). */
+.ai-tool-panel--planner {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
 }
 
 .ai-tool-action-btn {

@@ -550,10 +550,15 @@ function App({ mode = 'popup' }) {
     ]);
     
     // Apply theme immediately
-    const theme = initialData.theme || 
+    const theme = initialData.theme ||
       (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     setThemeMode(theme);
     document.documentElement.setAttribute('data-theme', theme);
+    if (!initialData.theme) {
+      // Persist the OS-derived fallback so the settings toggle and command
+      // palette (which read the stored theme) agree with the rendered theme.
+      browser.storage.local.set({ theme, darkModeToggle: theme === 'dark' });
+    }
     
     // Set sort value
     setSortValue(initialData.currentSortValue || 'DATE');

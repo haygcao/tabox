@@ -1,7 +1,8 @@
 /* eslint-disable no-undef */
 // chrome/ai-client.js
 // Service-worker AI client. All inference goes through the Tabox Worker's
-// POST /ai/complete proxy (OpenRouter, DeepSeek V4 Flash) so the OpenRouter
+// POST /ai/complete proxy (OpenRouter; model pinned server-side in
+// server/src/aiProxy.js, currently google/gemini-3.5-flash-lite) so the OpenRouter
 // API key never ships in the extension — the Worker holds it as a secret and
 // authenticates callers by their Google token. The popup's app/ai/aiClient.js
 // relays through here via the `aiComplete` message; keep the session/prompt
@@ -31,16 +32,19 @@ async function aiAvailability() {
 // Sessions are stateless request builders: each prompt sends only the system
 // prompt + that prompt (no accumulated context), so repeated prompts on one
 // session don't get slower or costlier over a long run.
-async function createAISession({ systemPrompt, temperature, topK, signal } = {}) {
+// `action` is a short slug naming the feature making the call (e.g.
+// 'auto-rename'); the Worker records it for usage analytics only — it never
+// changes the model or the prompt. Omit it and the Worker logs 'unknown'.
+async function createAISession({ systemPrompt, temperature, topK, signal, action } = {}) {
     // Prefetch/refresh the auth token so the first prompt doesn't pay for it.
     aiClientBgUtils.getAuthTokenForAI().catch(() => {});
     return {
         prompt: (text, options = {}) => requestCompletion(
-            { systemPrompt, temperature, topK },
+            { systemPrompt, temperature, topK, action },
             text,
             { ...options, signal: options.signal || signal },
         ),
-        clone: () => createAISession({ systemPrompt, temperature, topK, signal }),
+        clone: () => createAISession({ systemPrompt, temperature, topK, signal, action }),
         destroy: () => {},
     };
 }
@@ -63,6 +67,36 @@ async function promptForJSON(session, prompt, schema, signal) {
 const AI_REQUEST_TIMEOUT_MS = 90_000;
 
 async function requestCompletion(config, text, { responseConstraint, signal } = {}) {
+    const messages = [];
+    if (config.systemPrompt) messages.push({ role: 'system', content: config.systemPrompt });
+    messages.push({ role: 'user', content: text });
+    return performCompletionRequest(messages, {
+        temperature: config.temperature,
+        topK: config.topK,
+        responseConstraint,
+        signal,
+        action: config.action,
+    });
+}
+
+// The Worker's /ai/complete caps a request at 32 messages (system + windowed
+// chat history). Callers window their history; this guard turns an overflow
+// into a clear client-side error instead of a Worker 400.
+const MAX_CHAT_MESSAGES = 32;
+
+// Multi-turn chat completion: accepts a FULL messages array (system/user/
+// assistant roles — the Worker accepts assistant since the Task Planner
+// change). One-shot prompts should keep using sessions/requestCompletion.
+async function requestChatCompletion(messages, { temperature, topK, responseConstraint, signal, modelTier, action } = {}) {
+    if (!Array.isArray(messages) || messages.length === 0) throw new Error('Tabox AI: no messages to send');
+    if (messages.length > MAX_CHAT_MESSAGES) throw new Error(`Tabox AI: too many messages (max ${MAX_CHAT_MESSAGES})`);
+    // Project to the exact wire shape so stray fields (ids, timestamps) from
+    // stored transcripts never reach the Worker's strict validator.
+    const wireMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+    return performCompletionRequest(wireMessages, { temperature, topK, responseConstraint, signal, modelTier, action });
+}
+
+async function performCompletionRequest(messages, { temperature, topK, responseConstraint, signal, modelTier, action } = {}) {
     const token = await aiClientBgUtils.getAuthTokenForAI();
     if (!token) throw new Error('Tabox AI: sign in to Tabox to use AI features');
     // One internal controller drives the fetch; the caller's signal and the
@@ -78,12 +112,14 @@ async function requestCompletion(config, text, { responseConstraint, signal } = 
         else signal.addEventListener('abort', onCallerAbort, { once: true });
     }
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, AI_REQUEST_TIMEOUT_MS);
-    const messages = [];
-    if (config.systemPrompt) messages.push({ role: 'system', content: config.systemPrompt });
-    messages.push({ role: 'user', content: text });
     const body = { messages };
-    if (config.temperature !== undefined) body.temperature = config.temperature;
-    if (config.topK !== undefined) body.top_k = config.topK;
+    // Tier NAME only — the Worker maps it to a pinned model ('thinking' runs a
+    // reasoning pass; used by Task Planner chat turns).
+    if (modelTier !== undefined) body.model_tier = modelTier;
+    // Usage-analytics label only (see createAISession).
+    if (typeof action === 'string' && action) body.action = action;
+    if (temperature !== undefined) body.temperature = temperature;
+    if (topK !== undefined) body.top_k = topK;
     if (responseConstraint) {
         body.response_format = {
             type: 'json_schema',
@@ -129,6 +165,47 @@ async function requestCompletion(config, text, { responseConstraint, signal } = 
     return data.content;
 }
 
+// The Worker's /ai/validate-urls caps a request at 20 urls; larger sets are
+// sent as sequential chunks. 30s per chunk is generous: the Worker itself
+// gives each probe a 5s deadline and runs them concurrently.
+const VALIDATE_URLS_CHUNK = 20;
+const VALIDATE_URLS_TIMEOUT_MS = 30_000;
+
+// Check reachability of AI-suggested URLs via the Worker's POST
+// /ai/validate-urls. Returns the concatenated per-url verdicts
+// [{ url, ok, status }]. Throws on missing token / non-OK / malformed reply —
+// callers treat ANY throw as fail-open (keep all tabs), so validator downtime
+// never breaks the feature that called it.
+async function validateUrls(urls) {
+    const token = await aiClientBgUtils.getAuthTokenForAI();
+    if (!token) throw new Error('Tabox AI: sign in to Tabox to use AI features');
+    const list = Array.isArray(urls) ? urls : [];
+    const results = [];
+    for (let i = 0; i < list.length; i += VALIDATE_URLS_CHUNK) {
+        const chunk = list.slice(i, i + VALIDATE_URLS_CHUNK);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), VALIDATE_URLS_TIMEOUT_MS);
+        let response;
+        try {
+            response = await fetch(`${AI_API_BASE}/ai/validate-urls`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ urls: chunk }),
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(`Tabox AI: URL validation failed (${response.status}): ${data.error || 'request_failed'}`);
+        }
+        if (!Array.isArray(data.results)) throw new Error('Tabox AI: URL validation returned a malformed reply');
+        results.push(...data.results);
+    }
+    return results;
+}
+
 // Models occasionally wrap JSON in a markdown fence even under json_schema.
 function parseJSONContent(raw) {
     const trimmed = raw.trim();
@@ -136,7 +213,7 @@ function parseJSONContent(raw) {
     return JSON.parse(fenced ? fenced[1] : trimmed);
 }
 
-const aiClientApi = { aiAvailability, createAISession, promptForJSON };
+const aiClientApi = { aiAvailability, createAISession, promptForJSON, requestChatCompletion, validateUrls };
 
 /* istanbul ignore next */
 if (typeof globalThis !== 'undefined') globalThis.TaboxAIClient = aiClientApi;

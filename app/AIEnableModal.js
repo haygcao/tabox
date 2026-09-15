@@ -61,7 +61,7 @@ function AIEnableModal({ isOpen, onClose }) {
 
                 <div className="ai-enable-modal-body">
                     <p>
-                        Tabox AI is powered by <strong>DeepSeek V4 Flash</strong>, a cloud AI model
+                        Tabox AI is powered by <strong>Google Gemini 3.5 Flash Lite</strong>, a cloud AI model
                         accessed through OpenRouter. It names, organizes, and de-duplicates your
                         collections for you.
                     </p>

@@ -43,9 +43,6 @@ docs/
 # Marketing assets / copy — not tracked
 marketing/
 
-# Pricing page: local env + generated output (token lives here; don't commit)
-site/pricing/.env
-site/pricing/pricing.html
 
 # Local env files (API tokens) — never commit
 .env.local
@@ -54,3 +51,6 @@ server/.wrangler/
 tabox-firefox-*.zip
 tabox-source-*.zip
 videos/
+
+# Playwright CLI scratch output (page snapshots / console logs)
+.playwright-cli/
