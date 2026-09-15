@@ -5,8 +5,12 @@ import { browser } from '../static/globals';
 const USER_TOGGLE_ANIMATION_MS = 500;
 
 const Switch = props => {
-  const { id: _id, textOn, textOff, disabled, className, animateOnUserToggleOnly = false, onBeforeChange, ...otherProps } = props;
-  const [isChecked, setIsChecked] = useState(false);
+  const { id: _id, textOn, textOff, disabled, className, animateOnUserToggleOnly = false, onBeforeChange, checked, onToggle, ...otherProps } = props;
+  // Controlled mode: when `checked` is provided the parent owns the state
+  // (e.g. dark mode derives from the theme atom) and storage is not touched.
+  const isControlled = checked !== undefined;
+  const [internalChecked, setInternalChecked] = useState(false);
+  const isChecked = isControlled ? checked : internalChecked;
   const [toggleAnimation, setToggleAnimation] = useState(null);
   const loaded = useRef(false);
   const animationTimeoutRef = useRef(null);
@@ -42,12 +46,13 @@ const Switch = props => {
   }, [clearAnimationTimeout]);
 
   useEffect(() => {
+    if (isControlled) return;
     clearToggleAnimation();
     loaded.current = false;
 
     browser.storage.local.get(_id).then((items) => {
         if (!loaded.current) {
-            setIsChecked(!!items[_id]);
+            setInternalChecked(!!items[_id]);
             loaded.current = true;
         }
     });
@@ -55,19 +60,19 @@ const Switch = props => {
     const onStorageChanged = (changes) => {
         if (changes[_id] && changes[_id].newValue !== undefined) {
             loaded.current = true;
-            setIsChecked(!!changes[_id].newValue);
+            setInternalChecked(!!changes[_id].newValue);
         }
     };
     browser.storage.onChanged.addListener(onStorageChanged);
     return () => browser.storage.onChanged.removeListener(onStorageChanged);
-  }, [_id, clearToggleAnimation]);
+  }, [_id, clearToggleAnimation, isControlled]);
 
   useEffect(() => {
-    if (!loaded.current) return;
+    if (isControlled || !loaded.current) return;
     const localStorageObj = {};
-    localStorageObj[_id] = disabled ? false : isChecked;
+    localStorageObj[_id] = disabled ? false : internalChecked;
     browser.storage.local.set(localStorageObj);
-  }, [disabled, isChecked, _id]);
+  }, [disabled, internalChecked, _id, isControlled]);
 
   const toggle = useCallback((event) => {
     const target = event.target;
@@ -76,12 +81,16 @@ const Switch = props => {
       target.checked = !target.checked;
       return;
     }
-    setIsChecked(target.checked);
     queueToggleAnimation(target.checked ? 'on' : 'off');
+    if (isControlled) {
+      if (onToggle) onToggle(target.checked);
+      return;
+    }
+    setInternalChecked(target.checked);
     const localStorageObj = {};
     localStorageObj[_id] = target.checked;
     browser.storage.local.set(localStorageObj);
-  }, [_id, queueToggleAnimation, onBeforeChange]);
+  }, [_id, queueToggleAnimation, onBeforeChange, isControlled, onToggle]);
 
   const wrapperClassName = [
     className,

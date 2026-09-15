@@ -211,6 +211,74 @@ describe('Switch', () => {
         expect(browser.storage.local.set).toHaveBeenCalledWith({ testSwitch: !initialChecked });
     });
 
+    describe('controlled mode', () => {
+        test('reflects the checked prop instead of storage', async () => {
+            // Storage says false; the controlled prop must win.
+            browser.storage.local.get.mockResolvedValue({ testSwitch: false });
+
+            let container;
+            await act(async () => {
+                const result = render(
+                    <Switch id="testSwitch" textOn="ON" textOff="OFF" checked={true} onToggle={jest.fn()} />
+                );
+                container = result.container;
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+
+            const checkbox = container.querySelector('input[type="checkbox"]');
+            expect(checkbox.checked).toBe(true);
+        });
+
+        test('calls onToggle with the next value and does not write its own storage key', async () => {
+            const onToggle = jest.fn();
+            let container;
+            await act(async () => {
+                const result = render(
+                    <Switch id="testSwitch" textOn="ON" textOff="OFF" checked={false} onToggle={onToggle} />
+                );
+                container = result.container;
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+
+            browser.storage.local.set.mockClear();
+            const checkbox = container.querySelector('input[type="checkbox"]');
+
+            await act(async () => {
+                fireEvent.click(checkbox);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+
+            expect(onToggle).toHaveBeenCalledWith(true);
+            const selfWrites = browser.storage.local.set.mock.calls
+                .filter(([arg]) => arg && Object.prototype.hasOwnProperty.call(arg, 'testSwitch'));
+            expect(selfWrites).toHaveLength(0);
+        });
+
+        test('updates when the checked prop changes', async () => {
+            let container, rerender;
+            await act(async () => {
+                const result = render(
+                    <Switch id="testSwitch" textOn="ON" textOff="OFF" checked={false} onToggle={jest.fn()} />
+                );
+                container = result.container;
+                rerender = result.rerender;
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+
+            const checkbox = container.querySelector('input[type="checkbox"]');
+            expect(checkbox.checked).toBe(false);
+
+            await act(async () => {
+                rerender(
+                    <Switch id="testSwitch" textOn="ON" textOff="OFF" checked={true} onToggle={jest.fn()} />
+                );
+                await new Promise(resolve => setTimeout(resolve, 0));
+            });
+
+            expect(checkbox.checked).toBe(true);
+        });
+    });
+
     test('has correct CSS classes', async () => {
         let container;
         await act(async () => {

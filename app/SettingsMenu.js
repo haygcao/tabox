@@ -83,10 +83,6 @@ export default function SettingsMenu(props) {
         const { googleUser: storedGoogleUser } = await browser.storage.local.get('googleUser');
         setGoogleUser(storedGoogleUser || null);
 
-        const { theme } = await browser.storage.local.get('theme');
-        const isDarkMode = theme === 'dark';
-        await browser.storage.local.set({ darkModeToggle: isDarkMode });
-
         if (chkPerformanceMode === true) {
             document.documentElement.classList.add('performance-mode');
         } else {
@@ -154,12 +150,13 @@ export default function SettingsMenu(props) {
         return () => window.removeEventListener('tabox:open-restore-session', openSession);
     }, [sessionList]);
 
-    const handleDarkModeToggle = async () => {
-        const newMode = themeMode === 'dark' ? 'light' : 'dark';
-        const isDarkMode = newMode === 'dark';
+    const handleDarkModeToggle = async (isDarkMode) => {
+        const newMode = isDarkMode ? 'dark' : 'light';
 
         setThemeMode(newMode);
         document.documentElement.setAttribute('data-theme', newMode);
+        // darkModeToggle is a write-only mirror kept for backward compat;
+        // the switch renders from themeState, never from this key.
         await browser.storage.local.set({
             theme: newMode,
             darkModeToggle: isDarkMode,
@@ -400,7 +397,8 @@ export default function SettingsMenu(props) {
                     description: 'Switch Tabox between light and dark themes.',
                     switchProps: {
                         id: 'darkModeToggle',
-                        onMouseUp: handleDarkModeToggle,
+                        checked: themeMode === 'dark',
+                        onToggle: handleDarkModeToggle,
                         'data-tooltip-id': 'main-tooltip',
                         'data-tooltip-content': 'Toggle between light and dark theme',
                         textOn: <span><IoMoon size="16" style={{ marginRight: '8px' }} />Dark Mode: <strong>On</strong></span>,
