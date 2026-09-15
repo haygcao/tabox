@@ -172,7 +172,16 @@ describe('OnboardingGuide', () => {
         const css = fs.readFileSync(path.join(__dirname, '../app/OnboardingGuide.css'), 'utf8');
         const source = fs.readFileSync(path.join(__dirname, '../app/OnboardingGuide.js'), 'utf8');
 
-        expect(css).not.toMatch(/animation(?:-iteration-count)?[^;{}]*infinite/i);
+        // The dialog's liquid-glass gradient ring (.onboarding-dialog::before, the same
+        // recipe as the AI modal) is the one intentional looping animation: it is chrome,
+        // not a scene demo, and is gated behind prefers-reduced-motion + performance-mode.
+        const withoutGlassRing = css.replace(
+            /@media \(prefers-reduced-motion: no-preference\) \{\s*\.onboarding-dialog::before[^}]*\}\s*\}/g,
+            ''
+        );
+        expect(withoutGlassRing).not.toMatch(/animation(?:-iteration-count)?[^;{}]*infinite/i);
+        expect(css).toMatch(/@media \(prefers-reduced-motion: no-preference\) \{\s*\.onboarding-dialog::before \{ animation: onboarding-glass-flow/);
+        expect(css).toContain('html.performance-mode .onboarding-dialog::before { animation: none !important; }');
         expect(css).toContain('animation-fill-mode: both !important');
         expect(css).toContain('animation-iteration-count: 1 !important');
         expect(css).toContain('.onboarding-scene.is-active');
